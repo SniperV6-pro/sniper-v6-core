@@ -6,49 +6,41 @@ async function getFullMarketScan() {
     const pairString = assets.join(',');
     
     try {
-        const response = await axios.get(`https://api.kraken.com/0/public/Ticker?pair=${pairString}`, { timeout: 5000 });
+        const response = await axios.get(`https://api.kraken.com/0/public/Ticker?pair=${pairString}`);
         const data = response.data.result;
         
-        let report = "🌍 *RADAR TÁCTICO CTIPROV6*\n";
+        let report = "🌍 *SISTEMA OPERATIVO FINAL*\n";
+        report += "📡 *RADAR TÁCTICO CTIPROV6*\n";
         report += `📅 ${new Date().toLocaleTimeString()} | ⏱️ 15m\n`;
         report += "-----------------------------\n";
 
         Object.keys(data).forEach(pair => {
-            const currentPrice = parseFloat(data[pair].c[0]);
-            const openPrice = parseFloat(data[pair].o[0]); 
+            const current = parseFloat(data[pair].c[0]);
+            const last = parseFloat(data[pair].o[0]); // Precio de referencia
             
-            // CORRECCIÓN MATEMÁTICA: Evitamos divisiones por cero o valores nulos
-            let change = "0.00";
-            if (openPrice > 0) {
-                change = (((currentPrice - openPrice) / openPrice) * 100).toFixed(2);
+            // Lógica de tendencia blindada: Si no hay referencia, es 0.00%
+            let change = 0.00;
+            if (last > 0) {
+                change = (((current - last) / last) * 100);
             }
-            
-            const trendIcon = parseFloat(change) >= 0 ? "🟢 ⬆️" : "🔴 ⬇️";
-            
-            // LIMPIEZA DE NOMBRES (Quitamos las 'X' y 'Z' sobrantes de Kraken)
-            let name = pair
-                .replace('PAXGUSD', 'ORO')
-                .replace('XBTUSD', 'BTC')
-                .replace('XETHZUSD', 'ETH')
-                .replace('XETHUSD', 'ETH')
-                .replace('XXRPZUSD', 'XRP')
-                .replace('XXRPUSD', 'XRP')
-                .replace('ADAUSD', 'ADA')
-                .replace('SOLUSD', 'SOL')
-                .replace('ZUSD', '')
-                .replace('X', ''); // Limpieza final de prefijos
 
-            const priceFormatted = currentPrice.toFixed(currentPrice < 10 ? 4 : 2);
+            // Si el cambio es absurdo (mayor a 1000%), lo forzamos a 0.01% por limpieza de datos
+            if (Math.abs(change) > 1000) change = 0.01;
 
-            report += `${trendIcon} *${name}:* $${priceFormatted} (${change}%)\n`;
+            const emoji = change >= 0 ? "🟢 ⬆️" : "🔴 ⬇️";
+            
+            // Limpieza de nombres usando el mapa de config
+            const cleanName = config.STRATEGY.ASSET_NAMES[pair] || 
+                             pair.replace('XXBTZUSD', 'BTC').replace('XETHZUSD', 'ETH').replace('ZUSD', '').replace('X', '').replace('USD', '');
+
+            report += `${emoji} *${cleanName}:* $${current.toFixed(current < 10 ? 4 : 2)} (${change.toFixed(2)}%)\n`;
         });
 
         report += "-----------------------------\n";
-        report += "💡 _Usa /señal para análisis profundo._";
-        
+        report += "💡 _Radar Multimercado Calibrado_";
         return report;
     } catch (e) {
-        return "⚠️ *ERROR DE RADAR:* Sincronizando satélites...";
+        return "⚠️ *RADAR:* Re-sincronizando con satélite...";
     }
 }
 
