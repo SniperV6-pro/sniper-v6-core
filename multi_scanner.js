@@ -1,20 +1,20 @@
 const axios = require('axios');
 
-const ASSETS = ['PAXGUSD', 'XXBTZUSD', 'XETHZUSD', 'XRPUSD', 'ADAUSD'];
-
 async function getFullMarketScan() {
+    const assets = ['PAXGUSD', 'XXBTZUSD', 'XETHZUSD'];
     try {
-        const pairs = ASSETS.join(',');
-        const res = await axios.get(`https://api.kraken.com/0/public/Ticker?pair=${pairs}`);
+        const res = await axios.get(`https://api.kraken.com/0/public/Ticker?pair=${assets.join(',')}`);
         let report = "🌍 *MAPA DE MERCADOS V6*\n\n";
         
-        for (const pair of ASSETS) {
+        Object.keys(res.data.result).forEach(pair => {
             const price = parseFloat(res.data.result[pair].c[0]);
-            report += `• ${pair.replace('ZUSD', '').replace('PAXGUSD', 'ORO')}: $${price.toFixed(2)}\n`;
-        }
+            const name = pair.includes('XBT') ? 'BTC' : pair.includes('PAXG') ? 'ORO' : 'ETH';
+            report += `• *${name}*: $${price.toFixed(2)}\n`;
+        });
+        
         return report;
     } catch (e) {
-        return "⚠️ Error en escaneo múltiple.";
+        return "⚠️ Error al conectar con Kraken.";
     }
 }
 
