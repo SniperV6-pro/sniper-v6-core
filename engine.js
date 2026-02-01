@@ -1,58 +1,55 @@
 const config = require('./config');
 
-class TradingEngine {
+class EliteTraderBrain {
     /**
-     * Analiza la dirección del mercado basada en Capa de Aprendizaje
+     * PROCESAMIENTO DE ESTRUCTURA HISTÓRICA
      */
-    async processMarketData(supabase, currentMarketData) {
-        const { price } = currentMarketData;
-
-        // Recuperar historial para análisis técnico profundo
-        const { data, error } = await supabase
-            .from('learning_db')
+    async analyzeWithHistoricalDepth(supabase, currentPrice) {
+        // Extraemos los últimos 100 registros de tu "Memoria" en Supabase
+        const { data: history } = await supabase.from('learning_db')
             .select('price')
             .order('created_at', { ascending: false })
-            .limit(config.STRATEGY.LOOKBACK_PERIODS);
+            .limit(100);
 
-        if (error || !data || data.length < 5) {
-            return { action: 'INITIALIZING', reason: 'Recolectando datos de mercado...' };
+        if (!history || history.length < 20) {
+            return { action: "CALIBRANDO 🧠", probability: "0%", context: { zone: "SIN DATOS" } };
         }
 
-        const priceHistory = data.map(d => d.price);
-        const sma = priceHistory.reduce((a, b) => a + b, 0) / priceHistory.length;
+        const prices = history.map(h => h.price);
+        const high = Math.max(...prices);
+        const low = Math.min(...prices);
+        const range = high - low;
         
-        // Cálculo de Momentum
-        const previousPrice = priceHistory[0];
-        const momentum = price - sma;
+        // Lógica de Acción de Precio (Price Action)
+        const isAtSupport = currentPrice <= (low + (range * 0.20));
+        const isAtResistance = currentPrice >= (high - (range * 0.20));
 
-        // Lógica de Confluencia Sniper V6
-        let signal = 'NEUTRAL';
-        let probability = 'LOW';
+        let decision = "WAITING";
+        let score = 0;
 
-        if (price > sma && price > previousPrice) {
-            signal = 'BUY 📈';
-            probability = momentum > config.STRATEGY.VOLATILITY_THRESHOLD ? 'HIGH' : 'MEDIUM';
-        } else if (price < sma && price < previousPrice) {
-            signal = 'SELL 📉';
-            probability = Math.abs(momentum) > config.STRATEGY.VOLATILITY_THRESHOLD ? 'HIGH' : 'MEDIUM';
+        if (isAtSupport) {
+            decision = "BUY 📈";
+            score = 85;
+        } else if (isAtResistance) {
+            decision = "SELL 📉";
+            score = 85;
         }
 
         return {
-            asset: config.STRATEGY.ASSET,
-            price: price.toFixed(2),
-            signal: signal,
-            confidence: probability,
-            riskManagement: {
-                lot: config.ACCOUNT.LOT_SIZE,
-                sl: (price + (signal === 'BUY 📈' ? -config.ACCOUNT.RISK_PER_TRADE : config.ACCOUNT.RISK_PER_TRADE)).toFixed(2),
-                tp: (price + (signal === 'BUY 📈' ? 3.0 : -3.0)).toFixed(2)
+            price: currentPrice.toFixed(2),
+            action: decision,
+            probability: `${score}%`,
+            context: {
+                high: high.toFixed(2),
+                low: low.toFixed(2),
+                zone: isAtSupport ? "SOPORTE" : (isAtResistance ? "RESISTENCIA" : "ZONA MEDIA")
             },
-            analysis: {
-                sma: sma.toFixed(2),
-                deviation: momentum.toFixed(4)
+            risk: {
+                lot: config.ACCOUNT.LOT_SIZE,
+                sl: (currentPrice + (decision === 'BUY 📈' ? -config.ACCOUNT.RISK_PER_TRADE : config.ACCOUNT.RISK_PER_TRADE)).toFixed(2)
             }
         };
     }
 }
 
-module.exports = new TradingEngine();
+module.exports = new EliteTraderBrain();
