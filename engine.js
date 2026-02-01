@@ -1,46 +1,40 @@
 const config = require('./config');
 
-/**
- * Motor de Inteligencia Sniper V6
- * Analiza la estructura del mercado comparando el precio actual con la memoria de Supabase.
- */
 async function analyzeWithHistoricalDepth(supabase, currentPrice) {
     try {
-        // Extraemos los últimos 100 registros para determinar Soporte y Resistencia reales
-        const { data: history, error } = await supabase
+        // Traemos datos rápidos para Scalping
+        const { data: history } = await supabase
             .from('learning_db')
             .select('price')
             .order('created_at', { ascending: false })
-            .limit(100);
+            .limit(50);
 
-        if (error || !history || history.length < 10) {
-            return { 
-                action: "CALIBRANDO", 
-                probability: "0%", 
-                context: { zone: "Memoria insuficiente" }, 
-                price: currentPrice.toFixed(2), 
-                risk: { lot: config.ACCOUNT.LOT_SIZE, sl: 0 } 
-            };
+        if (!history || history.length < 5) {
+            return { action: "ESPERAR", probability: "0%", context: { zone: "Analizando..." }, price: currentPrice, risk: { lot: 0.01, sl: 0 } };
         }
 
         const prices = history.map(h => h.price);
-        const maxPrice = Math.max(...prices);
-        const minPrice = Math.min(...prices);
-        const range = maxPrice - minPrice;
-        
-        let action = "ESPERAR";
-        let probability = 60;
-        let zone = "Zona Media (Riesgo)";
+        const max = Math.max(...prices);
+        const min = Math.min(...prices);
+        const spread = max - min;
 
-        // Lógica Sniper: Solo operamos en los extremos del rango histórico
-        if (currentPrice <= (minPrice + (range * 0.10))) {
-            action = "COMPRA 📈";
-            probability = 92;
-            zone = "Soporte (Piso Histórico)";
-        } else if (currentPrice >= (maxPrice - (range * 0.10))) {
-            action = "VENTA 📉";
-            probability = 89;
-            zone = "Resistencia (Techo Histórico)";
+        // LÓGICA DE ANTICIPACIÓN (SCALPING)
+        // Detectamos el movimiento 2 minutos antes de que toque el extremo
+        let action = "ESPERAR";
+        let probability = 50;
+        let zone = "Neutral";
+
+        const buyThreshold = min + (spread * 0.15); // Zona de pre-compra
+        const sellThreshold = max - (spread * 0.15); // Zona de pre-venta
+
+        if (currentPrice <= buyThreshold) {
+            action = "COMPRA (READY) 📈";
+            probability = 94;
+            zone = "Cerca de Soporte";
+        } else if (currentPrice >= sellThreshold) {
+            action = "VENTA (READY) 📉";
+            probability = 91;
+            zone = "Cerca de Resistencia";
         }
 
         return {
@@ -50,12 +44,11 @@ async function analyzeWithHistoricalDepth(supabase, currentPrice) {
             context: { zone },
             risk: {
                 lot: config.ACCOUNT.LOT_SIZE,
-                sl: action === "COMPRA 📈" ? (currentPrice - 1.50).toFixed(2) : (currentPrice + 1.50).toFixed(2)
+                sl: action.includes("COMPRA") ? (currentPrice - 1.20).toFixed(2) : (currentPrice + 1.20).toFixed(2)
             }
         };
     } catch (e) {
-        console.error("Error en Engine:", e.message);
-        return { action: "ERROR", probability: "0%", context: { zone: "Falla de Motor" }, price: currentPrice, risk: { lot: 0.01, sl: 0 } };
+        return { action: "ERROR", probability: "0%", context: { zone: "Falla" }, price: currentPrice, risk: { lot: 0.01, sl: 0 } };
     }
 }
 
