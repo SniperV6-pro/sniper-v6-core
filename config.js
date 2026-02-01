@@ -1,12 +1,11 @@
 module.exports = {
     RISK: {
-        BALANCE: 20.00,
-        LOT: 0.01,
-        MAX_LOSS: 1.50,
-        TARGET_PROFIT: 3.00
+        BALANCE: 20.00, // Cuenta base del plan
+        LOT: 0.01,       // Lote máximo permitido
+        MAX_LOSS: 1.50   // SL máximo basado en pérdida permitida
     },
     MARKET: {
-        ASSET: 'PAXGUSD',
-        INTERVAL: 300000 // 5 minutos (M5)
+        PAIR: 'PAXGUSD', // Oro para lectura real
+        INTERVAL: 300000 // Escaneo M5
     }
 };
