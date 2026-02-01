@@ -99,4 +99,3 @@ bot.command('aprender', async (ctx) => {
 });
 
 bot.launch();
-                    
