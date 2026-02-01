@@ -88,3 +88,17 @@ bot.command('rendimiento', async (ctx) => {
     const p = await calculateYield(supabase);
     ctx.replyWithMarkdown(`📈 *RENDIMIENTO DEL SISTEMA*\n\nVariación detectada: ${p}\nEstado de cuenta: $${config.ACCOUNT.INITIAL_BALANCE} USD`);
 });
+
+// --- LANZAMIENTO SEGURO Y EXCLUSIVO ---
+bot.launch({ 
+    dropPendingUpdates: true // 💡 Esto elimina mensajes viejos y fuerza la desconexión de otros servidores
+}).then(() => {
+    console.log("🚀 Sniper V6: Conexión Única y Segura Establecida.");
+}).catch((err) => {
+    console.error("❌ Fallo crítico al iniciar sesión:", err.message);
+});
+
+// Manejo de cierre profesional de procesos
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
+        
