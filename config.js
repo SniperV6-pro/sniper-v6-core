@@ -1,28 +1,19 @@
 /**
- * CTIPROV6 CONFIGURATION MODULE
- * Definición de constantes para Scalping de Alta Precisión
+ * CTIPROV6 CONFIGURATION - MULTI-RADAR EDITION
  */
-
 module.exports = {
-    // CRDENCIALES Y SISTEMA
     SYSTEM: {
-        POLLING_INTERVAL: 60000, // Sincronización base de 60s (El index.js refina esto)
-        RETRY_ATTEMPTS: 3,       // Intentos de reconexión si falla internet
-        TIMEFRAME: 15            // Operamos en velas de 15 minutos
+        POLLING_INTERVAL: 60000,
+        TIMEFRAME: 15
     },
-
-    // ESTRATEGIA DE TRADING
     STRATEGY: {
-        ASSET: 'PAXGUSD',        // Ticker de Kraken para ORO (Paxos Gold)
-        PAIR_DISPLAY: 'XAU/USD', // Nombre visual para las alertas
-        MIN_CONFIDENCE: 60       // Filtro mínimo para notificar
+        ASSET: 'PAXGUSD', // Activo principal (Oro)
+        RADAR_ASSETS: ['PAXGUSD', 'XBTUSD', 'ETHUSD', 'SOLUSD', 'XRPUSD', 'ADAUSD'],
+        MIN_CONFIDENCE: 75 // Solo nos avisa si la probabilidad es alta
     },
-
-    // GESTIÓN DE CAPITAL (MONEY MANAGEMENT)
     ACCOUNT: {
-        INITIAL_BALANCE: 20,     // Capital base inicial
-        RISK_PER_TRADE: 2.00,    // Riesgo máximo en Dólares por operación (ajustable)
-        LOT_SIZE: 0.01,          // Lote mínimo de arranque
-        LEVERAGE: 100            // Apalancamiento estimado (informativo)
+        INITIAL_BALANCE: 20,
+        RISK_PER_TRADE: 2.00,
+        LOT_SIZE: 0.01
     }
 };
