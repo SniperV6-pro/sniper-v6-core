@@ -5,33 +5,42 @@ const axios = require('axios');
 const config = require('./config');
 const scanner = require('./scanner');
 const engine = require('./engine');
-const { getFullMarketScan } = require('./multi_scanner');
+
+// Importación segura para evitar el error de escaneo múltiple
+let multiScanner;
+try {
+    multiScanner = require('./multi_scanner');
+} catch (e) {
+    console.error("Aviso: multi_scanner.js no encontrado o con errores.");
+}
 
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// --- VIGILANTE AUTOMÁTICO ---
+// --- VIGILANTE AUTOMÁTICO (Cada 5 min) ---
 async function coreCycle() {
-    const marketData = await scanner.getValidatedPrice();
-    if (marketData) {
-        await supabase.from('learning_db').insert([{ 
-            asset: config.STRATEGY.ASSET, 
-            price: marketData.price,
-            metadata: { spread: marketData.spread }
-        }]);
+    try {
+        const marketData = await scanner.getValidatedPrice();
+        if (marketData) {
+            await supabase.from('learning_db').insert([{ 
+                asset: config.STRATEGY.ASSET, 
+                price: marketData.price,
+                metadata: { spread: marketData.spread }
+            }]);
 
-        const analysis = await engine.analyzeWithHistoricalDepth(supabase, marketData.price);
-        if (parseInt(analysis.probability) >= 85) {
-            bot.telegram.sendMessage(process.env.CHAT_ID, 
-                `🔥 *ALERTA SNIPER PROACTIVA*\n\n` +
-                `Acción: *${analysis.action}*\n` +
-                `Precio: $${analysis.price}\n` +
-                `Zona: ${analysis.context.zone}\n\n` +
-                `🛡️ *GESTIÓN:* Lote ${analysis.risk.lot} | SL: $${analysis.risk.sl}`, 
-                { parse_mode: 'Markdown' }
-            );
+            const analysis = await engine.analyzeWithHistoricalDepth(supabase, marketData.price);
+            if (parseInt(analysis.probability) >= 85) {
+                bot.telegram.sendMessage(process.env.CHAT_ID, 
+                    `🔥 *ALERTA SNIPER PROACTIVA*\n\n` +
+                    `Acción: *${analysis.action}*\n` +
+                    `Precio: $${analysis.price}\n` +
+                    `Zona: ${analysis.context.zone}\n\n` +
+                    `🛡️ *GESTIÓN:* Lote ${analysis.risk.lot} | SL: $${analysis.risk.sl}`, 
+                    { parse_mode: 'Markdown' }
+                );
+            }
         }
-    }
+    } catch (err) { console.log("Error en ciclo:", err.message); }
 }
 setInterval(coreCycle, config.SYSTEM.POLLING_INTERVAL);
 
@@ -42,7 +51,7 @@ bot.start((ctx) => {
         `🎯 *SNIPER V6 ONLINE*\n\n` +
         `🧠 Cerebro: Superdotado Activo\n` +
         `🛡️ Lote: ${config.ACCOUNT.LOT_SIZE}\n\n` +
-        `_Usa /aprender si aún no has inyectado los datos._`
+        `_Usa /aprender si el sistema no tiene datos históricos._`
     );
 });
 
@@ -50,7 +59,9 @@ bot.command('aprender', async (ctx) => {
     ctx.reply("🧠 Iniciando absorción de datos históricos...");
     try {
         const res = await axios.get(`https://api.kraken.com/0/public/OHLC?pair=${config.STRATEGY.ASSET}&interval=60`);
-        const historyData = res.data.result[Object.keys(res.data.result)[0]];
+        const pairKey = Object.keys(res.data.result)[0];
+        const historyData = res.data.result[pairKey];
+        
         const points = historyData.slice(-100).map(item => ({
             asset: config.STRATEGY.ASSET,
             price: parseFloat(item[4]), 
@@ -59,30 +70,35 @@ bot.command('aprender', async (ctx) => {
         await supabase.from('learning_db').insert(points);
         ctx.reply("✅ Conocimiento absorbido con éxito.");
     } catch (e) {
-        ctx.reply("❌ Error: " + e.message);
+        ctx.reply("❌ Error en absorción: " + e.message);
     }
 });
 
 bot.command('señal', async (ctx) => {
-    const marketData = await scanner.getValidatedPrice();
-    if (!marketData) return ctx.reply("❌ Error de conexión.");
-    const analysis = await engine.analyzeWithHistoricalDepth(supabase, marketData.price);
-    ctx.replyWithMarkdown(
-        `🔍 *ANÁLISIS DE PRECISIÓN*\n\n` +
-        `💰 Precio Actual: $${analysis.price}\n` +
-        `📊 Acción: *${analysis.action}*\n` +
-        `🔥 Probabilidad: ${analysis.probability}\n` +
-        `📍 Zona: ${analysis.context.zone}\n\n` +
-        `🛡️ *GESTIÓN:* Lote ${analysis.risk.lot} | SL: $${analysis.risk.sl}`
-    );
+    try {
+        const marketData = await scanner.getValidatedPrice();
+        if (!marketData) return ctx.reply("❌ Error de conexión con el mercado.");
+        
+        const analysis = await engine.analyzeWithHistoricalDepth(supabase, marketData.price);
+        ctx.replyWithMarkdown(
+            `🔍 *ANÁLISIS DE PRECISIÓN*\n\n` +
+            `💰 Precio Actual: $${analysis.price}\n` +
+            `📊 Acción: *${analysis.action}*\n` +
+            `🔥 Probabilidad: ${analysis.probability}\n` +
+            `📍 Zona: ${analysis.context.zone}\n\n` +
+            `🛡️ *GESTIÓN:* Lote ${analysis.risk.lot} | SL: $${analysis.risk.sl}`
+        );
+    } catch (e) { ctx.reply("❌ Error al generar señal."); }
 });
 
 bot.command('mercados', async (ctx) => {
-    try {
-        const report = await getFullMarketScan();
-        ctx.replyWithMarkdown(report);
-    } catch (e) {
-        ctx.reply("⚠️ Error en escaneo múltiple: Verifica que multi_scanner.js esté en GitHub.");
+    if (multiScanner && typeof multiScanner.getFullMarketScan === 'function') {
+        try {
+            const report = await multiScanner.getFullMarketScan();
+            ctx.replyWithMarkdown(report);
+        } catch (e) { ctx.reply("⚠️ Error al escanear mercados."); }
+    } else {
+        ctx.reply("⚠️ El módulo de escaneo múltiple no está listo.");
     }
 });
 
@@ -91,3 +107,4 @@ bot.command('status', (ctx) => {
 });
 
 bot.launch({ dropPendingUpdates: true });
+    
