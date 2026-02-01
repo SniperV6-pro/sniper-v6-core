@@ -3,73 +3,63 @@ const config = require('./config');
 class CTIPROV6_Brain {
     constructor() {
         this.currentCapital = config.ACCOUNT.INITIAL_BALANCE;
-        this.riskPerTrade = 0.05; 
     }
 
-    setCapital(amount) {
-        this.currentCapital = parseFloat(amount);
-    }
+    setCapital(amount) { this.currentCapital = parseFloat(amount); }
 
-    async analyze(supabase, currentPrice, phase) {
+    async analyze(supabase, currentPrice, phase, assetId) {
         try {
             const { data: history } = await supabase
                 .from('learning_db')
                 .select('price')
+                .eq('asset', assetId)
                 .order('created_at', { ascending: false })
-                .limit(10);
+                .limit(20);
 
-            // PROTECCIÓN: Si no hay historial, evitamos que el bot muera
-            if (!history || history.length < 5) {
-                return {
-                    action: "CALIBRANDO",
-                    probability: 0,
-                    price: currentPrice.toFixed(2),
-                    context: { phase, trend: "ESPERANDO DATOS", volatility: "0" },
-                    risk: { lot: 0.01, sl_dist: "0", tp_dist: "0", capital_used: this.currentCapital }
-                };
+            if (!history || history.length < 10) {
+                return { action: "CALIBRANDO", probability: 0, price: currentPrice, risk: { lot: 0.01 } };
             }
 
             const prices = history.map(h => h.price);
-            const volatility = (Math.max(...prices) - Math.min(...prices));
-            const dynamicSL = Math.max(0.5, (volatility * 0.3)).toFixed(2); 
-
-            const lastPrice = prices[0];
-            const trend = currentPrice > prices[4] ? "ALCISTA" : "BAJISTA";
+            const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
+            const volatility = Math.max(...prices) - Math.min(...prices);
+            
+            // FILTRO PROFESIONAL: Solo operamos a favor de la tendencia (Media Simple)
+            const trend = currentPrice > avgPrice ? "ALCISTA" : "BAJISTA";
             
             let action = "ESPERAR";
-            let probability = 50;
+            let probability = 0;
 
-            if (trend === "BAJISTA" && currentPrice > lastPrice) {
+            // Estrategia de Scalping: Comprar en soporte de tendencia alcista / Vender en resistencia de bajista
+            if (trend === "ALCISTA" && currentPrice < prices[0]) {
                 action = "COMPRA (LONG)";
-                probability = phase === "PRE-ALERTA" ? 75 : 92;
-            } else if (trend === "ALCISTA" && currentPrice < lastPrice) {
+                probability = 85;
+            } else if (trend === "BAJISTA" && currentPrice > prices[0]) {
                 action = "VENTA (SHORT)";
-                probability = phase === "PRE-ALERTA" ? 75 : 92;
+                probability = 88;
             }
 
-            let rawLot = (this.currentCapital * this.riskPerTrade) / 200; 
-            let finalLot = Math.max(0.01, parseFloat(rawLot.toFixed(2)));
+            // Gestión de Riesgo Dinámica (Ratio 1:2)
+            const sl_dist = (volatility * 0.4).toFixed(2);
+            const tp_dist = (sl_dist * 2.1).toFixed(2);
+            
+            // Cálculo de lotaje profesional basado en riesgo
+            let finalLot = Math.max(config.ACCOUNT.MIN_LOT, (this.currentCapital * 0.05) / 100).toFixed(2);
 
             return {
                 action,
-                probability,
+                probability: phase === "CONFIRMACIÓN" ? probability + 5 : probability,
                 price: currentPrice.toFixed(2),
-                context: { phase, trend, volatility: volatility.toFixed(2) },
+                context: { trend, volatility: volatility.toFixed(2), phase },
                 risk: {
                     lot: finalLot,
-                    sl_dist: dynamicSL,
-                    tp_dist: (dynamicSL * 1.5).toFixed(2),
-                    capital_used: this.currentCapital
+                    sl: action === "COMPRA (LONG)" ? (currentPrice - parseFloat(sl_dist)).toFixed(2) : (currentPrice + parseFloat(sl_dist)).toFixed(2),
+                    tp: action === "COMPRA (LONG)" ? (currentPrice + parseFloat(tp_dist)).toFixed(2) : (currentPrice - parseFloat(tp_dist)).toFixed(2),
+                    capital: this.currentCapital
                 }
             };
         } catch (e) {
-            // RETORNO DE EMERGENCIA: Si algo falla, el bot no se detiene
-            return {
-                action: "ERROR TÉCNICO",
-                probability: 0,
-                price: currentPrice.toFixed(2),
-                risk: { lot: 0.01, sl_dist: "0", tp_dist: "0", capital_used: this.currentCapital }
-            };
+            return { action: "ERROR", probability: 0, price: currentPrice, risk: { lot: 0.01 } };
         }
     }
 }
