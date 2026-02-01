@@ -6,18 +6,10 @@ const config = require('./config');
 const scanner = require('./scanner');
 const engine = require('./engine');
 
-// Importación segura para evitar el error de escaneo múltiple
-let multiScanner;
-try {
-    multiScanner = require('./multi_scanner');
-} catch (e) {
-    console.error("Aviso: multi_scanner.js no encontrado o con errores.");
-}
-
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// --- VIGILANTE AUTOMÁTICO (Cada 5 min) ---
+// --- VIGILANTE AUTOMÁTICO ---
 async function coreCycle() {
     try {
         const marketData = await scanner.getValidatedPrice();
@@ -37,74 +29,48 @@ async function coreCycle() {
                     `Zona: ${analysis.context.zone}\n\n` +
                     `🛡️ *GESTIÓN:* Lote ${analysis.risk.lot} | SL: $${analysis.risk.sl}`, 
                     { parse_mode: 'Markdown' }
-                );
+                ).catch(e => console.log("Error enviando alerta:", e.message));
             }
         }
     } catch (err) { console.log("Error en ciclo:", err.message); }
 }
 setInterval(coreCycle, config.SYSTEM.POLLING_INTERVAL);
 
-// --- COMANDOS DEL DASHBOARD ---
-
+// --- COMANDOS ---
 bot.start((ctx) => {
-    ctx.replyWithMarkdown(
-        `🎯 *SNIPER V6 ONLINE*\n\n` +
-        `🧠 Cerebro: Superdotado Activo\n` +
-        `🛡️ Lote: ${config.ACCOUNT.LOT_SIZE}\n\n` +
-        `_Usa /aprender si el sistema no tiene datos históricos._`
-    );
+    ctx.replyWithMarkdown(`🎯 *SNIPER V6 ONLINE*\n🧠 Cerebro: Activo\n🛡️ Lote: ${config.ACCOUNT.LOT_SIZE}`);
 });
 
 bot.command('aprender', async (ctx) => {
-    ctx.reply("🧠 Iniciando absorción de datos históricos...");
+    ctx.reply("🧠 Absorbiendo datos históricos...");
     try {
         const res = await axios.get(`https://api.kraken.com/0/public/OHLC?pair=${config.STRATEGY.ASSET}&interval=60`);
         const pairKey = Object.keys(res.data.result)[0];
-        const historyData = res.data.result[pairKey];
-        
-        const points = historyData.slice(-100).map(item => ({
+        const points = res.data.result[pairKey].slice(-100).map(item => ({
             asset: config.STRATEGY.ASSET,
             price: parseFloat(item[4]), 
             metadata: { type: "Inyección Histórica" }
         }));
         await supabase.from('learning_db').insert(points);
         ctx.reply("✅ Conocimiento absorbido con éxito.");
-    } catch (e) {
-        ctx.reply("❌ Error en absorción: " + e.message);
-    }
+    } catch (e) { ctx.reply("❌ Error: " + e.message); }
 });
 
 bot.command('señal', async (ctx) => {
-    try {
-        const marketData = await scanner.getValidatedPrice();
-        if (!marketData) return ctx.reply("❌ Error de conexión con el mercado.");
-        
-        const analysis = await engine.analyzeWithHistoricalDepth(supabase, marketData.price);
-        ctx.replyWithMarkdown(
-            `🔍 *ANÁLISIS DE PRECISIÓN*\n\n` +
-            `💰 Precio Actual: $${analysis.price}\n` +
-            `📊 Acción: *${analysis.action}*\n` +
-            `🔥 Probabilidad: ${analysis.probability}\n` +
-            `📍 Zona: ${analysis.context.zone}\n\n` +
-            `🛡️ *GESTIÓN:* Lote ${analysis.risk.lot} | SL: $${analysis.risk.sl}`
-        );
-    } catch (e) { ctx.reply("❌ Error al generar señal."); }
-});
-
-bot.command('mercados', async (ctx) => {
-    if (multiScanner && typeof multiScanner.getFullMarketScan === 'function') {
-        try {
-            const report = await multiScanner.getFullMarketScan();
-            ctx.replyWithMarkdown(report);
-        } catch (e) { ctx.reply("⚠️ Error al escanear mercados."); }
-    } else {
-        ctx.reply("⚠️ El módulo de escaneo múltiple no está listo.");
-    }
+    const marketData = await scanner.getValidatedPrice();
+    if (!marketData) return ctx.reply("❌ Error de mercado.");
+    const analysis = await engine.analyzeWithHistoricalDepth(supabase, marketData.price);
+    ctx.replyWithMarkdown(`🔍 *ANÁLISIS*\n💰 Precio: $${analysis.price}\n📊 Acción: *${analysis.action}*\n🔥 Probabilidad: ${analysis.probability}\n📍 Zona: ${analysis.context.zone}`);
 });
 
 bot.command('status', (ctx) => {
-    ctx.reply(`✅ Sistema OK\nBase: $${config.ACCOUNT.INITIAL_BALANCE}\nLote: ${config.ACCOUNT.LOT_SIZE}`);
+    ctx.reply(`✅ Sistema OK\nBase: $${config.ACCOUNT.INITIAL_BALANCE}`);
 });
 
-bot.launch({ dropPendingUpdates: true });
-    
+// --- LANZAMIENTO SEGURO (SOLUCIONA EL ERROR 409) ---
+bot.launch({ dropPendingUpdates: true }).then(() => {
+    console.log("🚀 Sniper V6: Conexión única establecida.");
+});
+
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
