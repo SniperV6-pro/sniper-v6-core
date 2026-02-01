@@ -1,12 +1,7 @@
 const axios = require('axios');
 const config = require('./config');
 
-/**
- * RADAR MULTIMERCADO CTIPROV6 - V6.5
- * Proporciona una visión táctica de los 6 activos en tiempo real.
- */
 async function getFullMarketScan() {
-    // Usamos los activos definidos en la configuración centralizada
     const assets = config.STRATEGY.RADAR_ASSETS;
     const pairString = assets.join(',');
     
@@ -20,19 +15,29 @@ async function getFullMarketScan() {
 
         Object.keys(data).forEach(pair => {
             const currentPrice = parseFloat(data[pair].c[0]);
-            const openPrice = parseFloat(data[pair].o[0]); // Precio de apertura de hoy
-            const high = parseFloat(data[pair].h[0]);
-            const low = parseFloat(data[pair].l[0]);
+            const openPrice = parseFloat(data[pair].o[0]); 
             
-            // Cálculo de Tendencia Diaria
-            const change = (((currentPrice - openPrice) / openPrice) * 100).toFixed(2);
-            const trendIcon = change >= 0 ? "🟢 ⬆️" : "🔴 ⬇️";
+            // CORRECCIÓN MATEMÁTICA: Evitamos divisiones por cero o valores nulos
+            let change = "0.00";
+            if (openPrice > 0) {
+                change = (((currentPrice - openPrice) / openPrice) * 100).toFixed(2);
+            }
             
-            // Etiquetado limpio
-            let name = pair.replace('PAXGUSD', 'ORO').replace('XBTUSD', 'BTC').replace('ETHUSD', 'ETH').replace('ZUSD', '').replace('USD', '');
-            if(name === "XXBT") name = "BTC"; // Ajuste para ticker interno de Kraken
+            const trendIcon = parseFloat(change) >= 0 ? "🟢 ⬆️" : "🔴 ⬇️";
+            
+            // LIMPIEZA DE NOMBRES (Quitamos las 'X' y 'Z' sobrantes de Kraken)
+            let name = pair
+                .replace('PAXGUSD', 'ORO')
+                .replace('XBTUSD', 'BTC')
+                .replace('XETHZUSD', 'ETH')
+                .replace('XETHUSD', 'ETH')
+                .replace('XXRPZUSD', 'XRP')
+                .replace('XXRPUSD', 'XRP')
+                .replace('ADAUSD', 'ADA')
+                .replace('SOLUSD', 'SOL')
+                .replace('ZUSD', '')
+                .replace('X', ''); // Limpieza final de prefijos
 
-            // Formateo de decimales según el precio (Sats vs Gold/BTC)
             const priceFormatted = currentPrice.toFixed(currentPrice < 10 ? 4 : 2);
 
             report += `${trendIcon} *${name}:* $${priceFormatted} (${change}%)\n`;
@@ -43,8 +48,7 @@ async function getFullMarketScan() {
         
         return report;
     } catch (e) {
-        console.error("Error en Radar MultiScanner:", e.message);
-        return "⚠️ *ERROR DE RADAR:* No se pudo sincronizar con el satélite de precios.";
+        return "⚠️ *ERROR DE RADAR:* Sincronizando satélites...";
     }
 }
 
