@@ -4,46 +4,46 @@ const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
 const config = require('./config');
 const scanner = require('./scanner');
-const brain = require('./engine'); // CTIPROV6
+const brain = require('./engine');
 const multiScanner = require('./multi_scanner');
+const journal = require('./journal');
 
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// --- SINCRONIZADOR TEMPORAL (CRONÓMETRO DE VELAS) ---
+// --- SINCRONIZADOR TEMPORAL (CRONÓMETRO DE VELAS Y REPORTES) ---
 async function timeSyncLoop() {
     const now = new Date();
+    const hours = now.getHours();
     const minutes = now.getMinutes();
     
-    // Definimos las fases del Scalping
-    let phase = null;
+    // 1. LÓGICA DE REPORTE DIARIO AUTOMÁTICO (23:55 PM)
+    if (hours === 23 && minutes === 55) {
+        const dailySummary = await journal.getDailyReport(supabase);
+        bot.telegram.sendMessage(process.env.CHAT_ID, dailySummary, { parse_mode: 'Markdown' });
+    }
 
-    // PRE-ALERTA (2 min antes del cierre: 13, 28, 43, 58)
+    // 2. LÓGICA DE FASES DE SCALPING
+    let phase = null;
     if ([13, 28, 43, 58].includes(minutes)) {
         phase = "PRE-ALERTA";
-    } 
-    // CONFIRMACIÓN (Inicio de vela: 00, 15, 30, 45)
-    else if ([0, 15, 30, 45].includes(minutes)) {
+    } else if ([0, 15, 30, 45].includes(minutes)) {
         phase = "CONFIRMACIÓN";
     }
 
     if (phase) {
-        console.log(`[${now.toLocaleTimeString()}] Ejecutando fase: ${phase}`);
         const marketData = await scanner.getValidatedPrice();
-        
         if (marketData) {
-            // Inyectamos el precio para que el cerebro aprenda vela a vela
+            // Aprendizaje vela a vela
             if (phase === "CONFIRMACIÓN") {
                 await supabase.from('learning_db').insert([{ 
                     asset: config.STRATEGY.ASSET, price: marketData.price 
                 }]);
             }
 
-            // Análisis CTIPROV6
             const analysis = await brain.analyze(supabase, marketData.price, phase);
 
-            // Filtro de Calidad: Solo enviamos si hay una probabilidad decente
-            if (analysis.probability > 60) {
+            if (analysis.probability >= 70) {
                 let emoji = phase === "PRE-ALERTA" ? "⚠️" : "🚀";
                 let title = phase === "PRE-ALERTA" ? "PRE-ALERTA (2 min)" : "SEÑAL DE ENTRADA";
                 
@@ -52,12 +52,11 @@ async function timeSyncLoop() {
                     `-----------------------------\n` +
                     `📊 Acción: *${analysis.action}*\n` +
                     `💲 Precio: $${analysis.price}\n` +
-                    `📉 Tendencia: ${analysis.context.trend}\n` +
+                    `📈 Tendencia: ${analysis.context.trend}\n` +
                     `-----------------------------\n` +
                     `💰 Capital Base: $${analysis.risk.capital_used}\n` +
-                    `🛡️ *LOTE RECOMENDADO: ${analysis.risk.lot}*\n` +
-                    `🛑 SL: -${analysis.risk.sl_dist} pts\n` +
-                    `🎯 TP: +${analysis.risk.tp_dist} pts`,
+                    `🛡️ *LOTE: ${analysis.risk.lot}*\n` +
+                    `🛑 SL: -${analysis.risk.sl_dist} pts | 🎯 TP: +${analysis.risk.tp_dist} pts`,
                     { parse_mode: 'Markdown' }
                 );
             }
@@ -65,48 +64,51 @@ async function timeSyncLoop() {
     }
 }
 
-// Revisamos el reloj cada 60 segundos exactos
 setInterval(timeSyncLoop, 60000);
 
 // --- COMANDOS DE CONTROL ---
 
-bot.start((ctx) => ctx.reply("🧠 CTIPROV6 Online. Modo Scalping Sincronizado."));
+bot.start((ctx) => ctx.reply("🎯 CTIPROV6 Online. Scalping Pro Activado."));
 
-// COMANDO NUEVO: Ajustar Capital
+// COMANDO DE PRUEBA FORZADA
+bot.command('testforce', async (ctx) => {
+    ctx.reply("🧪 Iniciando prueba de estrés del sistema...");
+    try {
+        const marketData = await scanner.getValidatedPrice();
+        if (!marketData) throw new Error("Fallo en Scanner (Kraken)");
+        
+        const analysis = await brain.analyze(supabase, marketData.price, "TEST-FORZADO");
+        
+        ctx.replyWithMarkdown(
+            `✅ *SISTEMA OPERATIVO*\n\n` +
+            `📡 Conexión Kraken: OK ($${marketData.price})\n` +
+            `🧠 Cerebro CTIPROV6: OK (Análisis procesado)\n` +
+            `🗄️ Base de Datos: OK (Sync Supabase)\n` +
+            `🛡️ Gestión de Riesgo: OK (Lote: ${analysis.risk.lot})`
+        );
+    } catch (e) {
+        ctx.reply(`❌ ERROR EN PRUEBA: ${e.message}`);
+    }
+});
+
 bot.command('capital', (ctx) => {
     const args = ctx.message.text.split(' ');
-    if (args.length < 2) return ctx.reply("⚠️ Uso: /capital [monto] (Ej: /capital 50)");
-    
+    if (args.length < 2) return ctx.reply("⚠️ Uso: /capital [monto]");
     const amount = parseFloat(args[1]);
-    if (isNaN(amount)) return ctx.reply("❌ Error: Ingresa un número válido.");
-    
+    if (isNaN(amount)) return ctx.reply("❌ Monto inválido.");
     brain.setCapital(amount);
-    ctx.reply(`✅ Capital actualizado a $${amount}. El cerebro recalculará los lotes.`);
+    ctx.reply(`✅ Capital actualizado a $${amount}.`);
+});
+
+bot.command('diario', async (ctx) => {
+    const dailySummary = await journal.getDailyReport(supabase);
+    ctx.replyWithMarkdown(dailySummary);
 });
 
 bot.command('señal', async (ctx) => {
     const marketData = await scanner.getValidatedPrice();
     const analysis = await brain.analyze(supabase, marketData.price, "MANUAL");
-    ctx.replyWithMarkdown(
-        `🔍 *ANÁLISIS MANUAL CTIPROV6*\n` +
-        `Acción: ${analysis.action} (${analysis.probability}%)\n` +
-        `Volatilidad: ${analysis.context.volatility}\n` +
-        `Lote sugerido ($${analysis.risk.capital_used}): *${analysis.risk.lot}*`
-    );
-});
-
-bot.command('aprender', async (ctx) => {
-    ctx.reply("🧠 CTIPROV6: Recalibrando con velas de 15min...");
-    try {
-        const res = await axios.get(`https://api.kraken.com/0/public/OHLC?pair=${config.STRATEGY.ASSET}&interval=15`);
-        const pairKey = Object.keys(res.data.result)[0];
-        // Tomamos las últimas 50 velas para entender el ritmo actual
-        const points = res.data.result[pairKey].slice(-50).map(item => ({
-            asset: config.STRATEGY.ASSET, price: parseFloat(item[4])
-        }));
-        await supabase.from('learning_db').insert(points);
-        ctx.reply("✅ Calibración completada.");
-    } catch (e) { ctx.reply("❌ Error: " + e.message); }
+    ctx.replyWithMarkdown(`🔍 *ANÁLISIS MANUAL*\nPrecio: $${analysis.price}\nAcción: ${analysis.action}\nLote: ${analysis.risk.lot}`);
 });
 
 bot.command('mercados', async (ctx) => {
@@ -115,4 +117,4 @@ bot.command('mercados', async (ctx) => {
 });
 
 bot.launch({ dropPendingUpdates: true });
-        
+                                       
