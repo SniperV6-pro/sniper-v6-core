@@ -5,38 +5,50 @@ const axios = require('axios');
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// Motor de Precios vía Kraken (Infalible)
+let lastPrice = null;
+
+// Motor Kraken - Precisión XAU/USD
 async function getGoldPrice() {
     try {
         const response = await axios.get('https://api.kraken.com/0/public/Ticker?pair=PAXGUSD');
-        // Kraken devuelve los datos en un formato específico, aquí lo extraemos:
-        const price = response.data.result.PAXGUSD.c[0];
-        return parseFloat(price).toFixed(2);
+        return parseFloat(response.data.result.PAXGUSD.c[0]);
     } catch (error) {
-        console.error('Error en Kraken:', error.message);
-        return "Reconectando...";
+        return null;
     }
 }
 
-bot.start(async (ctx) => {
-    const goldPrice = await getGoldPrice();
-    const msg = `
-🎯 *Sniper V6 - KRAKEN ENGINE*
-▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
-💰 *Oro (XAU/USD):* $${goldPrice}
-📊 *Frecuencia:* M5 / M15
-🔥 *Estado:* Sniper en posición
-✅ *Supabase:* Online
-▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
-_Monitoreo activo de volatilidad._
-    `;
-    ctx.replyWithMarkdown(msg);
-});
+// EL PLAN: Monitor Autónomo cada 5 minutos (M5)
+async function scanMarket() {
+    const currentPrice = await getGoldPrice();
+    if (!currentPrice) return;
 
-bot.command('precio', async (ctx) => {
-    const goldPrice = await getGoldPrice();
-    ctx.reply(`📊 *Precio Oro (Kraken):* $${goldPrice}`, { parse_mode: 'Markdown' });
+    // 1. Guardar en Supabase para el historial de aprendizaje
+    await supabase.from('learning_db').insert([{ 
+        asset: 'XAUUSD', 
+        price: currentPrice, 
+        timestamp: new Date() 
+    }]);
+
+    // 2. Lógica de Alerta por Volatilidad (Scalping)
+    if (lastPrice) {
+        const diff = Math.abs(currentPrice - lastPrice);
+        if (diff >= 5) { // Alerta si se mueve $5 o más
+            const emoji = currentPrice > lastPrice ? '🚀' : '🔻';
+            bot.telegram.sendMessage(process.env.CHAT_ID || 'TU_CHAT_ID', 
+                `⚠️ *ALERTA DE VOLATILIDAD*\n\nInstrumento: Oro (XAU/USD)\nPrecio Actual: $${currentPrice.toFixed(2)}\nCambio: ${emoji} $${diff.toFixed(2)}\n\n_Estrategia M5 activa. Revisa gráficas._`, 
+                { parse_mode: 'Markdown' }
+            );
+        }
+    }
+    lastPrice = currentPrice;
+}
+
+// Ejecutar escáner cada 5 minutos
+setInterval(scanMarket, 300000);
+
+bot.start((ctx) => {
+    ctx.reply('🎯 Sniper V6 - Ejecutando Plan Maestro\n\n✅ Monitor M5/M15 Iniciado\n✅ Registro en Supabase Activo\n\nEl sistema te avisará de movimientos bruscos automáticamente.');
 });
 
 bot.launch();
-console.log("🚀 Motor Kraken activado. Sniper en posición.");
+console.log("🔥 Plan Maestro en marcha: Escáner M5 activado.");
