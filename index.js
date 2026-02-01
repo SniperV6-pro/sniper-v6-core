@@ -36,20 +36,32 @@ async function coreCycle() {
 }
 
 // Ejecución periódica según config
-setInterval(coreCycle, config.SYSTEM.POLLING_INTERVAL);
+setInterval(async () => {
+    console.log(`[${new Date().toLocaleTimeString()}] Ejecutando Ciclo de Vigilancia...`);
+    const marketData = await scanner.getValidatedPrice();
+    
+    if (marketData) {
+        // 1. Capa de Aprendizaje (Guarda el dato)
+        await supabase.from('learning_db').insert([{ 
+            asset: config.STRATEGY.ASSET, 
+            price: marketData.price,
+            metadata: { spread: marketData.spread }
+        }]);
 
-// --- INTERFAZ DE COMANDOS ---
-bot.start((ctx) => {
-    ctx.replyWithMarkdown(
-        `🎯 *SNIPER V6 ONLINE*\n\n` +
-        `SISTEMA OPERATIVO BAJO PLAN DE $20\n` +
-        `--------------------------\n` +
-        `• Activo: ${config.STRATEGY.ASSET}\n` +
-        `• Lote: ${config.ACCOUNT.LOT_SIZE}\n` +
-        `• Estrategia: SMA Momentum\n\n` +
-        `_Usa /señal para análisis manual o /status para diagnóstico._`
-    );
-});
+        // 2. Capa de Acción (¡Te busca a ti!)
+        const analysis = await engine.processMarketData(supabase, marketData);
+        if (analysis.confidence === 'HIGH') {
+            bot.telegram.sendMessage(process.env.CHAT_ID, 
+                `🔥 *ALERTA SNIPER: ALTA PROBABILIDAD*\n\n` +
+                `Acción: ${analysis.signal}\n` +
+                `Precio: $${analysis.price}\n` +
+                `Lote: ${analysis.riskManagement.lot}\n` +
+                `SL: $${analysis.riskManagement.sl}\n\n` +
+                `_Entrada detectada por confluencia de volumen._`, { parse_mode: 'Markdown' });
+        }
+    }
+}, config.SYSTEM.POLLING_INTERVAL);
+
 
 bot.command('señal', async (ctx) => {
     const marketData = await scanner.getValidatedPrice();
