@@ -72,3 +72,19 @@ bot.command('status', (ctx) => {
 
 bot.launch({ dropPendingUpdates: true });
 console.log("🚀 Sniper V6 Arquitectura Industrial Iniciada");
+
+// 1. Importar los nuevos módulos al inicio
+const { getFullMarketScan } = require('./multi_scanner');
+const { calculateYield } = require('./performance');
+
+// 2. Agregar el comando de Mercados Completo
+bot.command('mercados', async (ctx) => {
+    const report = await getFullMarketScan();
+    ctx.replyWithMarkdown(report);
+});
+
+// 3. Agregar el comando de Rendimiento (Money Flow)
+bot.command('rendimiento', async (ctx) => {
+    const p = await calculateYield(supabase);
+    ctx.replyWithMarkdown(`📈 *RENDIMIENTO DEL SISTEMA*\n\nVariación detectada: ${p}\nEstado de cuenta: $${config.ACCOUNT.INITIAL_BALANCE} USD`);
+});
