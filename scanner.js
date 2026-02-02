@@ -28,7 +28,7 @@ async function scanMarkets(supabase, bot, CHAT_ID, currentLot) {
         const message = `⚠️ PRE-ALERTA: ${asset} preparándose para ${signal.direction}`;
         await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
       } else if (signal.action === 'ENTRADA' && signal.direction) {
-        // Registrar en trades_history
+        // Registrar en trades_history con nombres en español
         await supabase.from('trades_history').insert({
           activo: asset,
           precio_entrada: signal.price,
