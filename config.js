@@ -6,7 +6,7 @@ module.exports = {
         RISK_REWARD_RATIO: 2.0,
         STOP_LOSS_PCT: 0.003,
         TAKE_PROFIT_PCT: 0.006,
-        MAX_SPREAD_ALLOWED: 100,
+        MAX_SPREAD_ALLOWED: 100, 
         RADAR_ASSETS: [
             'PAXGUSD', 'BTCUSD', 'ETHUSD', 'SOLUSD', 'XRPUSD', 
             'EURUSD', 'GBPUSD', 'NAS100', 'US30', 'LTCUSD'
