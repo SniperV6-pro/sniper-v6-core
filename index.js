@@ -1,109 +1,118 @@
-require('dotenv').config();
-const { Telegraf } = require('telegraf');
-const { createClient } = require('@supabase/supabase-js');
-const config = require('./config');
-const engine = require('./engine');
 const express = require('express');
 const axios = require('axios');
+const { Telegraf } = require('telegraf');
+const { createClient } = require('@supabase/supabase-js');
+const { calculateSignal } = require('./engine');
+const {
+  ASSETS,
+  KRAKEN_PAIRS,
+  MAX_SPREAD,
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  TELEGRAM_BOT_TOKEN,
+  PORT
+} = require('./config');
 
-const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const app = express();
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 
-let radarActivo = true;
-let lotajeManual = "0.01";
+// Estado global
+let radarActive = true;
+let currentLot = 1; // Lote dinámico
 
-// --- COMANDO /START ---
-bot.start((ctx) => ctx.reply("🎯 Sniper V6 Online. Use /help para ver los comandos de control."));
+// Función para consultar Kraken y procesar
+async function processAssets() {
+  if (!radarActive) return;
 
-// --- COMANDO /HELP ---
-bot.command('help', (ctx) => {
-    ctx.reply(`🛠️ **COMANDOS DE CONTROL**\n\n` +
-              `/status - Ver salud del sistema\n` +
-              `/aprender - Calibrar los 10 mercados\n` +
-              `/lote [valor] - Cambiar lotaje (Ej: /lote 0.02)\n` +
-              `/stop - Detener radar (Pánico)\n` +
-              `/go - Reanudar radar\n` +
-              `/limpiar - Borrar historial viejo de la DB`);
-});
+  for (const asset of ASSETS) {
+    try {
+      const krakenPair = KRAKEN_PAIRS[asset];
+      const response = await axios.get(`https://api.kraken.com/0/public/Ticker?pair=${krakenPair}`);
+      const data = response.data.result[krakenPair];
 
-// --- COMANDO /LOTE ---
-bot.command('lote', (ctx) => {
-    const nuevoLote = ctx.message.text.split(' ')[1];
-    if (nuevoLote) {
-        lotajeManual = nuevoLote;
-        ctx.reply(`📏 Lotaje actualizado a: ${lotajeManual}`);
-    } else {
-        ctx.reply(`Lote actual: ${lotajeManual}. Use /lote [valor] para cambiarlo.`);
+      if (!data) throw new Error('No data from Kraken');
+
+      const ask = parseFloat(data.a[0]);
+      const bid = parseFloat(data.b[0]);
+      const currentPrice = (ask + bid) / 2;
+      const spread = ask - bid;
+
+      // Guardar en Supabase
+      await supabase.from('learning_db').insert({ asset, price: currentPrice });
+
+      // Calcular señal
+      const signal = await calculateSignal(asset, currentPrice, spread);
+      signal.risk.lot = currentLot; // Aplicar lote dinámico
+
+      // Notificar vía Telegram si hay acción
+      if (signal.action !== 'WAIT' && signal.action !== 'LEARNING') {
+        const message = `*${signal.action}* en ${asset}\nPrecio: ${signal.price.toFixed(2)}\nConfianza: ${signal.probability.toFixed(2)}%\nSL: ${signal.risk.sl.toFixed(2)}, TP: ${signal.risk.tp.toFixed(2)}, Lote: ${signal.risk.lot}`;
+        await bot.telegram.sendMessage(process.env.TELEGRAM_CHAT_ID || 'YOUR_CHAT_ID', message, { parse_mode: 'Markdown' });
+      }
+
+      console.log(`Procesado ${asset}: ${signal.action}`);
+    } catch (err) {
+      console.error(`Error procesando ${asset}: ${err.message}`);
+      // Continuar con el siguiente activo
     }
-});
-
-// --- COMANDO /STOP y /GO ---
-bot.command('stop', (ctx) => { radarActivo = false; ctx.reply("🛑 Radar DETENIDO."); });
-bot.command('go', (ctx) => { radarActivo = true; ctx.reply("🚀 Radar REANUDADO."); });
-
-// --- COMANDO /APRENDER ---
-bot.command('aprender', async (ctx) => {
-    const total = config.STRATEGY.RADAR_ASSETS.length;
-    await ctx.reply(`🧠 Calibrando ${total} mercados...`);
-    for (const asset of config.STRATEGY.RADAR_ASSETS) {
-        await supabase.from('learning_db').insert([{ asset, price: 0, created_at: new Date() }]);
-    }
-    ctx.reply("✅ Mercados listos.");
-});
-
-// --- COMANDO /STATUS ---
-bot.command('status', (ctx) => {
-    ctx.reply(`🛰️ **STATUS**\nRadar: ${radarActivo ? '✅' : '🛑'}\nLote: ${lotajeManual}\nActivos: 10\nSpread Max: ${config.STRATEGY.MAX_SPREAD_ALLOWED}`);
-});
-
-// --- COMANDO /LIMPIAR (Mantenimiento) ---
-bot.command('limpiar', async (ctx) => {
-    const { error } = await supabase.from('learning_db').delete().lt('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
-    ctx.reply(error ? "❌ Error al limpiar" : "🧹 Historial antiguo eliminado.");
-});
-
-// --- LÓGICA DEL RADAR + PRE-ALERTA ---
-async function executarRadar() {
-    if (!radarActivo) return;
-
-    for (const assetId of config.STRATEGY.RADAR_ASSETS) {
-        try {
-            const response = await axios.get(`${process.env.BROKER_URL}/quote?symbol=${assetId}`);
-            if (!response.data) continue;
-            const { price, spread } = response.data;
-
-            const signal = await engine.analyze(supabase, parseFloat(price), assetId, parseInt(spread));
-
-            // 📢 1. LÓGICA DE PRE-ALERTA (Confianza entre 60% y 69%)
-            if (signal.action !== "WAIT" && signal.probability >= 60 && signal.probability < config.STRATEGY.MIN_CONFIDENCE) {
-                const preAlerta = `⚠️ **PRE-ALERTA: ${signal.assetName}**\n` +
-                                  `El mercado está ganando fuerza ${signal.action}. Esté atento al gráfico.`;
-                await bot.telegram.sendMessage(process.env.CHAT_ID, preAlerta, { parse_mode: 'Markdown' });
-            }
-
-            // 🎯 2. LÓGICA DE SEÑAL CONFIRMADA (Confianza >= 70%)
-            if (signal.action !== "WAIT" && signal.probability >= config.STRATEGY.MIN_CONFIDENCE) {
-                const alerta = `🎯 **ENTRADA CONFIRMADA: ${signal.assetName}**\n\n` +
-                               `💰 Orden: **${signal.action}**\n` +
-                               `🔥 Confianza: ${signal.probability}%\n` +
-                               `💵 Precio: ${signal.price}\n\n` +
-                               `📏 Lote Sugerido: ${lotajeManual}\n` +
-                               `⛔ SL: ${signal.risk.sl}\n` +
-                               `✅ TP: ${signal.risk.tp}`;
-                await bot.telegram.sendMessage(process.env.CHAT_ID, alerta, { parse_mode: 'Markdown' });
-            }
-
-            // Guardar para aprendizaje
-            await supabase.from('learning_db').insert([{ asset: assetId, price: parseFloat(price) }]);
-        } catch (err) { console.log(`Error en ${assetId}`); }
-    }
+  }
 }
 
-// SERVER EXPRESS
-const app = express();
-app.get('/', (req, res) => res.send('Sniper V6 Online'));
-app.listen(process.env.PORT || 10000);
+// Comandos de Telegram
+bot.start((ctx) => ctx.reply('Bienvenido a Sniper V6. Usa /help para comandos.'));
+bot.help((ctx) => ctx.reply('*Comandos:*\n/start - Iniciar\n/help - Ayuda\n/status - Estado del radar y lote\n/lote [valor] - Cambiar lote\n/stop - Pausar radar\n/go - Reanudar radar\n/aprender - Calibración masiva\n/limpiar - Borrar datos viejos', { parse_mode: 'Markdown' }));
+bot.command('status', (ctx) => {
+  const status = radarActive ? 'Activo' : 'Pausado';
+  ctx.reply(`Radar: ${status}\nLote actual: ${currentLot}`, { parse_mode: 'Markdown' });
+});
+bot.command('lote', (ctx) => {
+  const args = ctx.message.text.split(' ');
+  if (args.length > 1) {
+    const newLot = parseFloat(args[1]);
+    if (!isNaN(newLot) && newLot > 0) {
+      currentLot = newLot;
+      ctx.reply(`Lote cambiado a ${currentLot}`);
+    } else {
+      ctx.reply('Valor de lote inválido');
+    }
+  } else {
+    ctx.reply('Uso: /lote [valor]');
+  }
+});
+bot.command('stop', (ctx) => {
+  radarActive = false;
+  ctx.reply('Radar pausado');
+});
+bot.command('go', (ctx) => {
+  radarActive = true;
+  ctx.reply('Radar reanudado');
+});
+bot.command('aprender', async (ctx) => {
+  await processAssets();
+  ctx.reply('Calibración masiva completada');
+});
+bot.command('limpiar', async (ctx) => {
+  const { error } = await supabase.from('learning_db').delete().lt('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)); // Borrar >30 días
+  if (error) {
+    ctx.reply('Error limpiando datos');
+  } else {
+    ctx.reply('Datos viejos borrados');
+  }
+});
 
-bot.launch();
-setInterval(executarRadar, config.POLLING_INTERVAL);
-                
+// Servidor Express
+app.get('/', (req, res) => res.send('Sniper V6 corriendo'));
+app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
+
+// Bucle infinito cada 60s
+setInterval(processAssets, 60000);
+
+// Lanzar bot con delay para evitar 409
+setTimeout(() => {
+  bot.launch();
+}, 5000);
+
+// Graceful shutdown
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
