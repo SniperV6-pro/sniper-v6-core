@@ -1,21 +1,19 @@
 module.exports = {
-    SYSTEM: {
-        POLLING_INTERVAL: 60000,
-        TIMEFRAME: 15,
-        VERSION: "CTIPROV6-ULTIMATE"
-    },
     STRATEGY: {
-        // Mapeo profesional para evitar errores de nombres en Kraken
-        RADAR_ASSETS: ['PAXGUSD', 'XBTUSD', 'ETHUSD', 'SOLUSD', 'XRPUSD', 'ADAUSD'],
+        MIN_CONFIDENCE: 70,        // <--- Antes 85. Ahora enviará muchas más señales.
+        MIN_VOLATILITY: 0.0005,    // <--- Detectará movimientos más sutiles.
+        TREND_THRESHOLD: 0.001,    // <--- Sensibilidad aumentada.
+        RISK_REWARD_RATIO: 2,      // <--- Buscamos ganar el doble de lo arriesgado.
+        STOP_LOSS_PCT: 0.005,      // 0.5% de margen de pérdida.
+        TAKE_PROFIT_PCT: 0.01,     // 1.0% de meta de ganancia.
+        RADAR_ASSETS: ['PAXGUSD', 'BTCUSD', 'ETHUSD', 'SOLUSD', 'XRPUSD', 'ADAUSD'],
         ASSET_NAMES: {
-            'PAXGUSD': 'ORO', 'XBTUSD': 'BTC', 'ETHUSD': 'ETH', 
-            'SOLUSD': 'SOL', 'XRPUSD': 'XRP', 'ADAUSD': 'ADA'
-        },
-        MIN_CONFIDENCE: 80
-    },
-    ACCOUNT: {
-        INITIAL_BALANCE: 20,
-        RISK_PER_TRADE_PERCENT: 5,
-        MIN_LOT: 0.01
+            'PAXGUSD': 'ORO (PAXG)',
+            'BTCUSD': 'BITCOIN',
+            'ETHUSD': 'ETHEREUM',
+            'SOLUSD': 'SOLANA',
+            'XRPUSD': 'RIPPLE',
+            'ADAUSD': 'CARDANO'
+        }
     }
 };
