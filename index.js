@@ -14,7 +14,8 @@ const {
   SUPABASE_KEY,
   TELEGRAM_TOKEN,
   CHAT_ID,
-  PORT
+  PORT,
+  KRAKEN_PAIRS // Agregado para resolver el error en checkAndCloseTrades
 } = require('./config');
 
 const app = express();
@@ -37,7 +38,7 @@ async function checkAndCloseTrades() {
 
     for (const trade of openTrades) {
       // Obtener precio actual del activo
-      const krakenPair = KRAKEN_PAIRS[trade.activo]; // Asumiendo KRAKEN_PAIRS disponible
+      const krakenPair = KRAKEN_PAIRS[trade.activo]; // Ahora KRAKEN_PAIRS está definido
       const response = await axios.get(`https://api.kraken.com/0/public/Ticker?pair=${krakenPair}`);
       const data = response.data.result[krakenPair];
       const currentPrice = (parseFloat(data.a[0]) + parseFloat(data.b[0])) / 2;
