@@ -34,7 +34,8 @@ module.exports = {
   KRAKEN_PAIRS,
   MAX_SPREAD,
   SUPABASE_URL: process.env.SUPABASE_URL,
-  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
-  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
+  SUPABASE_KEY: process.env.SUPABASE_KEY,
+  TELEGRAM_TOKEN: process.env.TELEGRAM_TOKEN,
+  CHAT_ID: process.env.CHAT_ID,
   PORT: process.env.PORT || 10000
 };
