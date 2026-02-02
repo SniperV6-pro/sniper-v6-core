@@ -1,16 +1,27 @@
+/**
+ * CTIPROV6 - ENGINE DE ANÁLISIS AUTÓNOMO
+ * Lógica: Sensibilidad Extrema (5 velas) + Anti-Spread
+ */
+
 const config = require('./config');
 
-let currentCapital = 20; // Capital inicial para los $20 del usuario
+let currentCapital = 20;
 
 const engine = {
-    // Esta función permite que el bot actualice tu capital mediante /capital [monto]
+    // Permite actualizar el capital dinámicamente
     setCapital: (amount) => {
         currentCapital = amount;
     },
 
-    analyze: async (supabase, currentPrice, phase, assetId) => {
+    analyze: async (supabase, currentPrice, phase, assetId, currentSpread = 0) => {
         try {
-            // REDUCCIÓN DE MEMORIA: Solo miramos las últimas 5 velas para reaccionar al instante
+            // 1. FILTRO DE SPREAD: Si el broker sube el spread (como XRP a 344), bloqueamos la señal
+            if (currentSpread > config.STRATEGY.MAX_SPREAD_ALLOWED) {
+                console.log(`[Engine] BLOQUEO POR SPREAD: ${assetId} con ${currentSpread} puntos.`);
+                return { action: "WAIT_SPREAD", probability: 0, price: currentPrice };
+            }
+
+            // 2. OBTENCIÓN DE DATOS HISTÓRICOS (Memoria Ultra-Rápida de 5 velas)
             const { data: history, error } = await supabase
                 .from('learning_db')
                 .select('price')
@@ -18,20 +29,26 @@ const engine = {
                 .order('created_at', { ascending: false })
                 .limit(5);
 
+            // 3. AUTONOMÍA DE APRENDIZAJE: Si faltan datos, el bot NO se detiene.
+            // Simplemente reporta INITIALIZING y guarda el precio actual para "aprender" solo.
             if (error || !history || history.length < 2) {
-                console.log(`[Engine] Datos insuficientes para ${assetId}. Use /aprender`);
-                return { action: "WAIT", probability: 0, price: currentPrice };
+                return { 
+                    action: "INITIALIZING", 
+                    probability: 0, 
+                    price: currentPrice,
+                    status: "Auto-aprendiendo mercado..." 
+                };
             }
 
-            // Cálculo de media rápida (Fast Moving Average)
+            // 4. CÁLCULO DE TENDENCIA DINÁMICA
             const avgPrice = history.reduce((sum, row) => sum + row.price, 0) / history.length;
             const lastPrice = history[0].price;
 
             let action = "WAIT";
-            let probability = 65; // Base incrementada para facilitar la superación del umbral del 70%
+            let probability = 65; // Base agresiva para activar señales rápido
             let trend = currentPrice > avgPrice ? "ALCISTA" : "BAJISTA";
 
-            // LÓGICA DE DETECCIÓN DE IMPULSO
+            // Lógica de cruce de precio vs media de 5 periodos
             if (currentPrice > avgPrice) {
                 action = "BUY";
                 probability += 20; 
@@ -40,46 +57,46 @@ const engine = {
                 probability += 20;
             }
 
-            // BONO DE CONFIRMACIÓN: Si el precio actual es mejor que el de la vela anterior
+            // Bono de confirmación de vela (Lo que ves en MT5)
             if ((action === "BUY" && currentPrice > lastPrice) || 
                 (action === "SELL" && currentPrice < lastPrice)) {
                 probability += 10;
             }
 
-            // GESTIÓN DE RIESGO PARA CUENTA DE $20
+            // 5. PARÁMETROS DE EJECUCIÓN (Gestión de Riesgo)
             const lot = 0.01; 
-            // Stop Loss ajustado al 0.3% para proteger el capital en movimientos rápidos
-            const slDistance = currentPrice * 0.003; 
-            const tpDistance = slDistance * 2.0; // Ratio 1:2 para asegurar ganancias
+            const slDistance = currentPrice * config.STRATEGY.STOP_LOSS_PCT;
+            const tpDistance = slDistance * config.STRATEGY.RISK_REWARD_RATIO;
 
             const sl = action === "BUY" ? (currentPrice - slDistance) : (currentPrice + slDistance);
             const tp = action === "BUY" ? (currentPrice + tpDistance) : (currentPrice - tpDistance);
 
-            // Techo de probabilidad
+            // Aseguramos que la probabilidad no exceda el 99%
             if (probability > 99) probability = 99;
 
             return {
                 action,
                 probability,
-                price: parseFloat(currentPrice).toFixed(2),
+                price: parseFloat(currentPrice).toFixed(5),
                 context: {
                     trend,
-                    avg: avgPrice.toFixed(2),
-                    diff: (currentPrice - avgPrice).toFixed(2)
+                    avg: parseFloat(avgPrice).toFixed(5),
+                    spread: currentSpread,
+                    assetName: config.STRATEGY.ASSET_NAMES[assetId] || assetId
                 },
                 risk: {
                     lot: lot.toFixed(2),
-                    sl: sl.toFixed(2),
-                    tp: tp.toFixed(2),
+                    sl: parseFloat(sl).toFixed(5),
+                    tp: parseFloat(tp).toFixed(5),
                     capital: currentCapital
                 }
             };
         } catch (e) {
-            console.error("Error crítico en Engine:", e.message);
+            console.error(`[Engine Critical Error] en ${assetId}:`, e.message);
             return { action: "ERROR", probability: 0, price: currentPrice };
         }
     }
 };
 
 module.exports = engine;
-                    
+                                                                         
