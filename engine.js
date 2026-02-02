@@ -1,9 +1,4 @@
-const { createClient } = require('@supabase/supabase-js');
-const { SUPABASE_URL, SUPABASE_ANON_KEY } = require('./config');
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-async function calculateSignal(asset, currentPrice, spread) {
+async function analyze(supabase, asset, currentPrice, spread) {
   try {
     // Obtener los últimos 10 precios de Supabase
     const { data: prices, error } = await supabase
@@ -46,4 +41,4 @@ async function calculateSignal(asset, currentPrice, spread) {
   }
 }
 
-module.exports = { calculateSignal };
+module.exports = { analyze };
