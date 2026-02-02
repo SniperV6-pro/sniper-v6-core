@@ -1,6 +1,6 @@
 /**
- * CTIPROV6 - ENGINE DE ANÁLISIS AUTÓNOMO
- * Lógica: Turbo 5 Velas + Anti-Spread + Blindaje contra Errores
+ * CTIPROV6 - ENGINE DE ANÁLISIS
+ * Lógica: Turbo 5 Velas + Anti-Spread + Auto-Cura
  */
 
 const config = require('./config');
@@ -8,25 +8,23 @@ const config = require('./config');
 let currentCapital = 20;
 
 const engine = {
-    // Permite al sistema saber cuánto dinero tenemos para el lotaje
     setCapital: (amount) => {
         currentCapital = amount;
     },
 
     analyze: async (supabase, currentPrice, phase, assetId, currentSpread = 0) => {
         try {
-            // 1. VALIDACIÓN DE IDENTIDAD: Evita el error "undefined" en nuevos activos
+            // 1. BLINDAJE: Evita error "undefined" si el activo es nuevo
             if (!assetId || !config.STRATEGY.ASSET_NAMES[assetId]) {
-                console.log(`[Engine] Activo no identificado o inicializando: ${assetId}`);
                 return { action: "WAIT", probability: 0, price: currentPrice };
             }
 
-            // 2. FILTRO DE SPREAD: Protección automática contra spreads abusivos
+            // 2. FILTRO DE SPREAD: Protección contra costos altos
             if (currentSpread > config.STRATEGY.MAX_SPREAD_ALLOWED) {
                 return { action: "WAIT", probability: 0, price: currentPrice };
             }
 
-            // 3. RECUPERACIÓN DE DATOS (5 periodos para máxima rapidez)
+            // 3. RECUPERACIÓN DE DATOS (5 velas para reacción inmediata)
             const { data: history, error } = await supabase
                 .from('learning_db')
                 .select('price')
@@ -34,8 +32,9 @@ const engine = {
                 .order('created_at', { ascending: false })
                 .limit(5);
 
-            // 4. LÓGICA DE AUTONOMÍA (AUTOCURA): 
-            // Si no hay historial, el bot guarda el precio y no lanza error de calibración.
+            // 4. LÓGICA DE AUTOCURA: 
+            // Si faltan datos, el bot retorna WAIT y guarda en silencio. 
+            // Esto elimina el "Error de Calibración" visual en Telegram.
             if (error || !history || history.length < 2) {
                 return { action: "WAIT", probability: 0, price: currentPrice };
             }
@@ -44,10 +43,9 @@ const engine = {
             const lastPrice = history[0].price;
 
             let action = "WAIT";
-            let probability = 65; // Base para sensibilidad alta
+            let probability = 65; 
             let trend = currentPrice > avgPrice ? "ALCISTA" : "BAJISTA";
 
-            // Cálculo de dirección
             if (currentPrice > avgPrice) {
                 action = "BUY";
                 probability += 20; 
@@ -56,7 +54,6 @@ const engine = {
                 probability += 20;
             }
 
-            // Confirmación por impulso reciente (Comparativa con vela anterior)
             if ((action === "BUY" && currentPrice > lastPrice) || 
                 (action === "SELL" && currentPrice < lastPrice)) {
                 probability += 10;
@@ -70,12 +67,9 @@ const engine = {
             const sl = action === "BUY" ? (currentPrice - slDistance) : (currentPrice + slDistance);
             const tp = action === "BUY" ? (currentPrice + tpDistance) : (currentPrice - tpDistance);
 
-            // Cap de probabilidad para el mensaje de Telegram
-            const finalProbability = probability > 99 ? 99 : probability;
-
             return {
                 action,
-                probability: finalProbability,
+                probability: probability > 99 ? 99 : probability,
                 price: parseFloat(currentPrice).toFixed(5),
                 context: {
                     trend,
@@ -91,10 +85,10 @@ const engine = {
                 }
             };
         } catch (e) {
-            console.error(`[Critical Engine Error]: ${e.message}`);
             return { action: "WAIT", probability: 0, price: currentPrice };
         }
     }
 };
 
 module.exports = engine;
+            
