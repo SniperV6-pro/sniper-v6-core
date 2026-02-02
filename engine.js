@@ -1,69 +1,49 @@
-const config = require('./config');
+const { createClient } = require('@supabase/supabase-js');
+const { SUPABASE_URL, SUPABASE_ANON_KEY } = require('./config');
 
-const engine = {
-    analyze: async (supabase, currentPrice, assetId, currentSpread = 0) => {
-        try {
-            if (!assetId || !config.STRATEGY.ASSET_NAMES[assetId]) return { action: "WAIT", probability: 0 };
-            
-            // Protección de capital por Spread alto
-            if (currentSpread > config.STRATEGY.MAX_SPREAD_ALLOWED) {
-                return { action: "WAIT_SPREAD", probability: 0, spread: currentSpread };
-            }
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-            const { data: history, error } = await supabase
-                .from('learning_db')
-                .select('price, created_at')
-                .eq('asset', assetId)
-                .order('created_at', { ascending: false })
-                .limit(10);
+async function calculateSignal(asset, currentPrice, spread) {
+  try {
+    // Obtener los últimos 10 precios de Supabase
+    const { data: prices, error } = await supabase
+      .from('learning_db')
+      .select('price')
+      .eq('asset', asset)
+      .order('created_at', { ascending: false })
+      .limit(10);
 
-            if (error || !history || history.length < 5) {
-                return { action: "LEARNING", probability: 0, count: history ? history.length : 0 };
-            }
+    if (error) throw error;
 
-            const prices = history.map(h => h.price);
-            const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
-            const lastPrice = prices[0];
-
-            let probability = 60; 
-            let action = "WAIT";
-
-            // Lógica Alcista
-            if (currentPrice > avgPrice) {
-                action = "BUY";
-                probability += 15;
-                if (currentPrice > lastPrice) probability += 10;
-            } 
-            // Lógica Bajista
-            else if (currentPrice < avgPrice) {
-                action = "SELL";
-                probability += 15;
-                if (currentPrice < lastPrice) probability += 10;
-            }
-
-            // Gestión de Riesgo
-            const slDistance = currentPrice * config.STRATEGY.STOP_LOSS_PCT;
-            const tpDistance = slDistance * config.STRATEGY.RISK_REWARD_RATIO;
-            
-            const sl = action === "BUY" ? (currentPrice - slDistance) : (currentPrice + slDistance);
-            const tp = action === "BUY" ? (currentPrice + tpDistance) : (currentPrice - tpDistance);
-
-            return {
-                action,
-                probability: Math.min(probability, 99),
-                price: currentPrice.toFixed(5),
-                risk: {
-                    sl: sl.toFixed(5),
-                    tp: tp.toFixed(5),
-                    lot: "0.01"
-                },
-                assetName: config.STRATEGY.ASSET_NAMES[assetId]
-            };
-        } catch (err) {
-            console.error(`Error Engine: ${err.message}`);
-            return { action: "WAIT", probability: 0 };
-        }
+    if (prices.length < 10) {
+      return { action: 'LEARNING', probability: 0, price: currentPrice, risk: { sl: 0, tp: 0, lot: 0 } };
     }
-};
 
-module.exports = engine;
+    const priceValues = prices.map(p => p.price);
+    const avg = priceValues.reduce((a, b) => a + b, 0) / priceValues.length;
+    const variance = priceValues.reduce((sum, p) => sum + Math.pow(p - avg, 2), 0) / priceValues.length;
+    const stdDev = Math.sqrt(variance);
+    const confidence = Math.max(0, Math.min(100, 100 - (stdDev / avg * 100))); // Confianza basada en desviación
+
+    let action = 'WAIT';
+    if (spread > 100) {
+      action = 'WAIT_SPREAD';
+    } else if (confidence >= 70) {
+      action = 'ENTRADA';
+    } else if (confidence >= 60) {
+      action = 'PRE-ALERTA';
+    }
+
+    // Riesgo básico: SL -2%, TP +5%, lote dinámico (asumido 1 por defecto, ajustable externamente)
+    const sl = currentPrice * 0.98;
+    const tp = currentPrice * 1.05;
+    const lot = 1; // Dinámico, se ajusta desde index.js
+
+    return { action, probability: confidence, price: currentPrice, risk: { sl, tp, lot } };
+  } catch (err) {
+    console.error(`Error en engine para ${asset}:`, err.message);
+    return { action: 'ERROR', probability: 0, price: currentPrice, risk: { sl: 0, tp: 0, lot: 0 } };
+  }
+}
+
+module.exports = { calculateSignal };
