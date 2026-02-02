@@ -1,17 +1,18 @@
 async function analyze(supabase, asset, currentPrice, spread) {
   try {
-    // Obtener los últimos 15 precios (velas de 15 min) para análisis
+    // Obtener los últimos 20 precios para análisis de velas de 15 min
     const { data: prices, error } = await supabase
       .from('learning_db')
       .select('price')
       .eq('asset', asset)
       .order('created_at', { ascending: false })
-      .limit(15);
+      .limit(20);
 
     if (error) throw error;
 
-    if (prices.length < 15) {
-      return { action: 'LEARNING', probability: 0, price: currentPrice, risk: { sl: 0, tp: 0, lot: 0 }, direction: null };
+    // Sin datos no hay trading: Silencio absoluto si <20 precios
+    if (prices.length < 20) {
+      return { action: 'SILENCE', probability: 0, price: currentPrice, risk: { sl: 0, tp: 0, lot: 0 }, direction: null };
     }
 
     const priceValues = prices.map(p => p.price);
@@ -24,23 +25,23 @@ async function analyze(supabase, asset, currentPrice, spread) {
     let direction = null;
     if (spread > 100) {
       action = 'WAIT_SPREAD';
-    } else if (confidence > 80) { // Precisión: Solo señales con >80% confianza
-      // Lógica de dirección basada en ruptura del promedio
+    } else if (confidence > 80) { // Solo señales con >80% confianza
+      // Lógica de dirección: Ruptura del promedio
       if (currentPrice > avg) {
-        direction = 'COMPRA (BUY)';
+        direction = 'BUY';
         action = 'ENTRADA';
       } else if (currentPrice < avg) {
-        direction = 'VENTA (SELL)';
+        direction = 'SELL';
         action = 'ENTRADA';
       }
     }
 
-    // Riesgo para scalping: SL 1%, TP 2% (ajustable)
+    // Riesgo para scalping: SL 1%, TP 2%
     let sl, tp;
-    if (direction === 'COMPRA (BUY)') {
+    if (direction === 'BUY') {
       sl = currentPrice * 0.99; // -1%
       tp = currentPrice * 1.02; // +2%
-    } else if (direction === 'VENTA (SELL)') {
+    } else if (direction === 'SELL') {
       sl = currentPrice * 1.01; // +1%
       tp = currentPrice * 0.98; // -2%
     } else {
