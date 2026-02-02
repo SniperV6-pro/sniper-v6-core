@@ -5,6 +5,7 @@ if (!process.env.SUPABASE_KEY || !process.env.TELEGRAM_TOKEN) {
 }
 
 const express = require('express');
+const axios = require('axios'); // Librería axios incluida
 const { Telegraf } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 const { scanMarkets } = require('./scanner');
@@ -151,10 +152,10 @@ setInterval(performScan, 900000);
 // Verificación de PnL cada minuto (60000 ms)
 setInterval(checkAndCloseTrades, 60000);
 
-// Lanzar bot con delay para evitar 409
+// Lanzar bot con retraso de 10 segundos para evitar 409
 setTimeout(() => {
   bot.launch();
-}, 5000);
+}, 10000);
 
 // Graceful shutdown
 process.once('SIGINT', () => bot.stop('SIGINT'));
