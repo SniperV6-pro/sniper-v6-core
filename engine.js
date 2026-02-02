@@ -25,23 +25,20 @@ async function analyze(supabase, asset, currentPrice, spread) {
     let direction = null;
     if (spread > 100) {
       action = 'WAIT_SPREAD';
-    } else if (confidence > 80) { // Solo señales con >80% confianza
-      // Lógica de dirección: Ruptura del promedio
-      if (currentPrice > avg) {
-        direction = 'BUY';
-        action = 'ENTRADA';
-      } else if (currentPrice < avg) {
-        direction = 'SELL';
-        action = 'ENTRADA';
-      }
+    } else if (confidence >= 85) { // Entrada confirmada
+      action = 'ENTRADA';
+      direction = currentPrice > avg ? 'COMPRA' : 'VENTA';
+    } else if (confidence >= 70) { // Pre-alerta
+      action = 'PRE-ALERTA';
+      direction = currentPrice > avg ? 'COMPRA' : 'VENTA';
     }
 
     // Riesgo para scalping: SL 1%, TP 2%
     let sl, tp;
-    if (direction === 'BUY') {
+    if (direction === 'COMPRA') {
       sl = currentPrice * 0.99; // -1%
       tp = currentPrice * 1.02; // +2%
-    } else if (direction === 'SELL') {
+    } else if (direction === 'VENTA') {
       sl = currentPrice * 1.01; // +1%
       tp = currentPrice * 0.98; // -2%
     } else {
