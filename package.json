@@ -1,7 +1,7 @@
 {
   "name": "sniper-v6-core",
   "version": "1.0.0",
-  "description": "Sistema de Trading Autónomo Sniper V6 - 10 Mercados",
+  "description": "Sistema de Trading Pro - Sniper V6",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
