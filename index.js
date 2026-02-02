@@ -52,8 +52,8 @@ async function processAssets() {
       const signal = await analyze(supabase, asset, currentPrice, spread);
       signal.risk.lot = currentLot; // Aplicar lote dinámico
 
-      // Notificar vía Telegram si hay acción
-      if (signal.action !== 'WAIT' && signal.action !== 'LEARNING') {
+      // Notificar vía Telegram solo para 'PRE-ALERTA' o 'ENTRADA' (silencio en 'LEARNING' o confianza 0%)
+      if (signal.action === 'PRE-ALERTA' || signal.action === 'ENTRADA') {
         const message = `*${signal.action}* en ${asset}\nPrecio: ${signal.price.toFixed(2)}\nConfianza: ${signal.probability.toFixed(2)}%\nSL: ${signal.risk.sl.toFixed(2)}, TP: ${signal.risk.tp.toFixed(2)}, Lote: ${signal.risk.lot}`;
         await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
       }
