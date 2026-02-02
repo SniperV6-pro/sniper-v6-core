@@ -1,24 +1,24 @@
 /**
- * CTIPROV6 - CONFIGURACIÓN GLOBAL PROFESIONAL
+ * CTIPROV6 - ARCHIVO DE CONFIGURACIÓN GLOBAL
  * Versión: Abanico de 10 Mercados + Seguridad Anti-Spread
  */
 
 module.exports = {
     STRATEGY: {
-        // --- SENSIBILIDAD ---
-        MIN_CONFIDENCE: 70,         // Probabilidad mínima para disparar alerta
-        MIN_VOLATILITY: 0.0001,     // Sensibilidad para detectar movimientos lentos
+        // --- PARÁMETROS DE INTELIGENCIA ---
+        MIN_CONFIDENCE: 70,         
+        MIN_VOLATILITY: 0.0001,     
         TREND_THRESHOLD: 0.0005,    
         
-        // --- GESTIÓN DE RIESGO (Cuenta $20) ---
+        // --- GESTIÓN DE RIESGO ---
         RISK_REWARD_RATIO: 2.0,     
-        STOP_LOSS_PCT: 0.003,       // SL ajustado al 0.3%
-        TAKE_PROFIT_PCT: 0.006,     // TP al 0.6%
+        STOP_LOSS_PCT: 0.003,       
+        TAKE_PROFIT_PCT: 0.006,     
         
         // --- SEGURIDAD ---
-        MAX_SPREAD_ALLOWED: 100,    // Bloqueo si el spread > 100 (Protección contra XRP alto)
+        MAX_SPREAD_ALLOWED: 100,    // Filtro para evitar spreads como el de XRP 344
 
-        // --- ABANICO DE 10 MERCADOS ---
+        // --- ABANICO DE 10 MERCADOS (Sincronizados) ---
         RADAR_ASSETS: [
             'PAXGUSD', // Oro
             'BTCUSD',  // Bitcoin
@@ -36,7 +36,7 @@ module.exports = {
             'PAXGUSD': 'ORO (PAXG)',
             'BTCUSD': 'BITCOIN',
             'ETHUSD': 'ETHEREUM',
-            'SOLANA': 'SOLANA',
+            'SOLUSD': 'SOLANA',
             'XRPUSD': 'RIPPLE',
             'EURUSD': 'EURO/DOLAR',
             'GBPUSD': 'LIBRA/DOLAR',
@@ -47,5 +47,5 @@ module.exports = {
     },
     
     // --- CICLOS ---
-    POLLING_INTERVAL: 60000 // Escaneo cada 1 minuto
+    POLLING_INTERVAL: 60000 
 };
