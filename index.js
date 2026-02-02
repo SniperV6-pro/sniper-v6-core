@@ -1,21 +1,28 @@
+require('dotenv').config();
+
+if (!process.env.SUPABASE_KEY || !process.env.TELEGRAM_TOKEN) {
+  throw new Error('ERROR: Faltan variables de entorno en Render');
+}
+
 const express = require('express');
 const axios = require('axios');
 const { Telegraf } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
-const { calculateSignal } = require('./engine');
+const { analyze } = require('./engine');
 const {
   ASSETS,
   KRAKEN_PAIRS,
   MAX_SPREAD,
   SUPABASE_URL,
-  SUPABASE_ANON_KEY,
-  TELEGRAM_BOT_TOKEN,
+  SUPABASE_KEY,
+  TELEGRAM_TOKEN,
+  CHAT_ID,
   PORT
 } = require('./config');
 
 const app = express();
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const bot = new Telegraf(TELEGRAM_TOKEN);
 
 // Estado global
 let radarActive = true;
@@ -42,19 +49,19 @@ async function processAssets() {
       await supabase.from('learning_db').insert({ asset, price: currentPrice });
 
       // Calcular señal
-      const signal = await calculateSignal(asset, currentPrice, spread);
+      const signal = await analyze(supabase, asset, currentPrice, spread);
       signal.risk.lot = currentLot; // Aplicar lote dinámico
 
       // Notificar vía Telegram si hay acción
       if (signal.action !== 'WAIT' && signal.action !== 'LEARNING') {
         const message = `*${signal.action}* en ${asset}\nPrecio: ${signal.price.toFixed(2)}\nConfianza: ${signal.probability.toFixed(2)}%\nSL: ${signal.risk.sl.toFixed(2)}, TP: ${signal.risk.tp.toFixed(2)}, Lote: ${signal.risk.lot}`;
-        await bot.telegram.sendMessage(process.env.TELEGRAM_CHAT_ID || 'YOUR_CHAT_ID', message, { parse_mode: 'Markdown' });
+        await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
       }
 
       console.log(`Procesado ${asset}: ${signal.action}`);
     } catch (err) {
       console.error(`Error procesando ${asset}: ${err.message}`);
-      // Continuar con el siguiente activo
+      // Continuar con el siguiente activo sin detener el bucle
     }
   }
 }
