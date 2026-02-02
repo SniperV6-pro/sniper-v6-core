@@ -1,16 +1,16 @@
 require('dotenv').config();
 
 const ASSETS = [
-  'PAXGUSD',
-  'BTCUSD',
-  'ETHUSD',
-  'SOLUSD',
-  'XRPUSD',
-  'EURUSD',
-  'GBPUSD',
-  'NAS100',
-  'US30',
-  'LTCUSD'
+  'PAXGUSD',  // Oro digital, estable
+  'BTCUSD',   // Alta volatilidad, líder
+  'ETHUSD',   // Seguido de BTC, buen volumen
+  'SOLUSD',   // Cripto emergente, rupturas rápidas
+  'XRPUSD',   // Volátil, señales frecuentes
+  'LTCUSD',   // Estable con oportunidades
+  'ADAUSD',   // Cardano, alta liquidez y volatilidad
+  'DOTUSD',   // Polkadot, buen para scalping
+  'LINKUSD',  // Chainlink, rupturas predecibles
+  'UNIUSD'    // Uniswap, volátil con profit potencial
 ];
 
 const KRAKEN_PAIRS = {
@@ -20,17 +20,17 @@ const KRAKEN_PAIRS = {
   SOLUSD: 'SOLUSD',
   XRPUSD: 'XXRPZUSD',
   LTCUSD: 'XLTCZUSD',
-  EURUSD: 'EURUSD',
-  GBPUSD: 'GBPUSD',
-  NAS100: 'NAS100',
-  US30: 'US30'
+  ADAUSD: 'ADAUSD',
+  DOTUSD: 'DOTUSD',
+  LINKUSD: 'LINKUSD',
+  UNIUSD: 'UNIUSD'
 };
 
 const MAX_SPREAD = 100;
-const MAX_OPEN_TRADES = 3;  // Máximo 3 trades abiertos por activo
-const DAILY_LOSS_LIMIT = 100;  // Límite de pérdida diaria en USD (ajusta según lote)
-const RSI_PERIOD = 14;  // Período para RSI
-const EMA_PERIOD = 20;  // Período para EMA
+const MAX_OPEN_TRADES = 3;
+const DAILY_LOSS_LIMIT = 100;
+const RSI_PERIOD = 14;
+const EMA_PERIOD = 20;
 
 module.exports = {
   ASSETS,
