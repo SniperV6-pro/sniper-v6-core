@@ -45,14 +45,14 @@ async function processAssets() {
       const currentPrice = (ask + bid) / 2;
       const spread = ask - bid;
 
-      // Guardar en Supabase
+      // Guardar en Supabase usando columna 'price'
       await supabase.from('learning_db').insert({ asset, price: currentPrice });
 
       // Calcular señal
       const signal = await analyze(supabase, asset, currentPrice, spread);
       signal.risk.lot = currentLot; // Aplicar lote dinámico
 
-      // Notificar vía Telegram solo para 'PRE-ALERTA' o 'ENTRADA' (silencio en 'LEARNING' o confianza 0%)
+      // Modo silencioso: Solo notificar para 'PRE-ALERTA' o 'ENTRADA' (no 'LEARNING' ni confianza 0%)
       if (signal.action === 'PRE-ALERTA' || signal.action === 'ENTRADA') {
         const message = `*${signal.action}* en ${asset}\nPrecio: ${signal.price.toFixed(2)}\nConfianza: ${signal.probability.toFixed(2)}%\nSL: ${signal.risk.sl.toFixed(2)}, TP: ${signal.risk.tp.toFixed(2)}, Lote: ${signal.risk.lot}`;
         await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
@@ -61,7 +61,7 @@ async function processAssets() {
       console.log(`Procesado ${asset}: ${signal.action}`);
     } catch (err) {
       console.error(`Error procesando ${asset}: ${err.message}`);
-      // Continuar con el siguiente activo sin detener el bucle
+      // Robustez: Ignorar este activo y continuar con el siguiente sin detener el bot
     }
   }
 }
