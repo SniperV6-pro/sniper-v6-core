@@ -1,67 +1,70 @@
 const config = require('./config');
-let currentCapital = 20;
 
 const engine = {
-    setCapital: (amount) => { currentCapital = amount; },
-
-    analyze: async (supabase, currentPrice, phase, assetId, currentSpread = 0) => {
+    analyze: async (supabase, currentPrice, assetId, currentSpread = 0) => {
         try {
-            // Blindaje contra activos no configurados
             if (!assetId || !config.STRATEGY.ASSET_NAMES[assetId]) {
-                return { action: "WAIT", probability: 0, price: currentPrice };
+                return { action: "WAIT", probability: 0 };
             }
 
-            // Filtro de spread
             if (currentSpread > config.STRATEGY.MAX_SPREAD_ALLOWED) {
-                return { action: "WAIT", probability: 0, price: currentPrice };
+                return { action: "WAIT_SPREAD", probability: 0, spread: currentSpread };
             }
 
+            // BUSQUEDA PROFUNDA EN SUPABASE
             const { data: history, error } = await supabase
                 .from('learning_db')
-                .select('price')
+                .select('price, created_at')
                 .eq('asset', assetId)
                 .order('created_at', { ascending: false })
-                .limit(5);
+                .limit(10); // Aumentado para mejor promedio
 
-            // Si no hay datos, retorna WAIT en lugar de error para que el scanner aprenda solo
-            if (error || !history || history.length < 2) {
-                return { action: "WAIT", probability: 0, price: currentPrice };
+            if (error || !history || history.length < 5) {
+                return { action: "LEARNING", probability: 0, count: history ? history.length : 0 };
             }
 
-            const avgPrice = history.reduce((sum, row) => sum + row.price, 0) / history.length;
-            const lastPrice = history[0].price;
+            const prices = history.map(h => h.price);
+            const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
+            const lastPrice = prices[0];
 
+            let probability = 60; 
             let action = "WAIT";
-            let probability = 65;
-            let trend = currentPrice > avgPrice ? "ALCISTA" : "BAJISTA";
 
-            if (currentPrice > avgPrice) { action = "BUY"; probability += 20; }
-            else if (currentPrice < avgPrice) { action = "SELL"; probability += 20; }
-
-            if ((action === "BUY" && currentPrice > lastPrice) || 
-                (action === "SELL" && currentPrice < lastPrice)) {
-                probability += 10;
+            // ANALISIS DE TENDENCIA DINAMICA
+            if (currentPrice > avgPrice) {
+                action = "BUY";
+                probability += 15;
+                if (currentPrice > lastPrice) probability += 10;
+            } else if (currentPrice < avgPrice) {
+                action = "SELL";
+                probability += 15;
+                if (currentPrice < lastPrice) probability += 10;
             }
 
+            // GESTIÓN DE RIESGO MATEMÁTICA
             const slDistance = currentPrice * config.STRATEGY.STOP_LOSS_PCT;
             const tpDistance = slDistance * config.STRATEGY.RISK_REWARD_RATIO;
+            
+            const sl = action === "BUY" ? (currentPrice - slDistance) : (currentPrice + slDistance);
+            const tp = action === "BUY" ? (currentPrice + tpDistance) : (currentPrice - tpDistance);
 
             return {
                 action,
-                probability: probability > 99 ? 99 : probability,
-                price: parseFloat(currentPrice).toFixed(5),
-                context: { trend, avg: parseFloat(avgPrice).toFixed(5), spread: currentSpread, name: config.STRATEGY.ASSET_NAMES[assetId] },
+                probability: Math.min(probability, 99),
+                price: currentPrice.toFixed(5),
                 risk: {
-                    lot: "0.01",
-                    sl: (action === "BUY" ? currentPrice - slDistance : currentPrice + slDistance).toFixed(5),
-                    tp: (action === "BUY" ? currentPrice + tpDistance : currentPrice - tpDistance).toFixed(5),
-                    capital: currentCapital
-                }
+                    sl: sl.toFixed(5),
+                    tp: tp.toFixed(5),
+                    lot: "0.01"
+                },
+                assetName: config.STRATEGY.ASSET_NAMES[assetId]
             };
-        } catch (e) {
-            return { action: "WAIT", probability: 0, price: currentPrice };
+        } catch (err) {
+            console.error(`Error en Engine para ${assetId}:`, err);
+            return { action: "WAIT", probability: 0 };
         }
     }
 };
 
 module.exports = engine;
+                
