@@ -5,14 +5,10 @@ if (!process.env.SUPABASE_KEY || !process.env.TELEGRAM_TOKEN) {
 }
 
 const express = require('express');
-const axios = require('axios');
 const { Telegraf } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
-const { analyze } = require('./engine');
+const { scanMarkets } = require('./scanner');
 const {
-  ASSETS,
-  KRAKEN_PAIRS,
-  MAX_SPREAD,
   SUPABASE_URL,
   SUPABASE_KEY,
   TELEGRAM_TOKEN,
@@ -27,9 +23,8 @@ const bot = new Telegraf(TELEGRAM_TOKEN);
 // Estado global
 let radarActive = true;
 let currentLot = 1; // Lote dinámico
-let balanceAcumulado = 0; // Balance acumulado para informes
 
-// Función para verificar y cerrar trades (PnL)
+// Función para verificar y cerrar trades (PnL cada minuto)
 async function checkAndCloseTrades() {
   try {
     const { data: openTrades, error } = await supabase
@@ -41,7 +36,7 @@ async function checkAndCloseTrades() {
 
     for (const trade of openTrades) {
       // Obtener precio actual del activo
-      const krakenPair = KRAKEN_PAIRS[trade.activo];
+      const krakenPair = KRAKEN_PAIRS[trade.activo]; // Asumiendo KRAKEN_PAIRS disponible
       const response = await axios.get(`https://api.kraken.com/0/public/Ticker?pair=${krakenPair}`);
       const data = response.data.result[krakenPair];
       const currentPrice = (parseFloat(data.a[0]) + parseFloat(data.b[0])) / 2;
@@ -68,9 +63,8 @@ async function checkAndCloseTrades() {
           .update({ estado: status, profit_loss: profitLoss, closed_at: new Date() })
           .eq('id', trade.id);
 
-        balanceAcumulado += profitLoss;
-        const result = status === 'WIN' ? '✅ WIN' : '❌ LOSS';
-        const message = `RESULTADO: ${result} en ${trade.activo}\nProfit/Loss: ${profitLoss.toFixed(2)}\nBalance Acumulado: ${balanceAcumulado.toFixed(2)}`;
+        const result = status === 'WIN' ? '✅ OPERACIÓN GANADA (WIN)' : '❌ OPERACIÓN PERDIDA (LOSS)';
+        const message = `${result} en ${trade.activo}\nProfit/Loss: ${profitLoss.toFixed(2)}`;
         await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
       }
     }
@@ -79,54 +73,15 @@ async function checkAndCloseTrades() {
   }
 }
 
-// Función para consultar Kraken y procesar (cada 15 min)
-async function processAssets() {
+// Función de escaneo cada 15 minutos
+async function performScan() {
   if (!radarActive) return;
-
-  for (const asset of ASSETS) {
-    try {
-      const krakenPair = KRAKEN_PAIRS[asset];
-      const response = await axios.get(`https://api.kraken.com/0/public/Ticker?pair=${krakenPair}`);
-      const data = response.data.result[krakenPair];
-
-      if (!data) throw new Error('No data from Kraken');
-
-      const ask = parseFloat(data.a[0]);
-      const bid = parseFloat(data.b[0]);
-      const currentPrice = (ask + bid) / 2;
-      const spread = ask - bid;
-
-      // Guardar en Supabase
-      await supabase.from('learning_db').insert({ asset, price: currentPrice });
-
-      // Calcular señal
-      const signal = await analyze(supabase, asset, currentPrice, spread);
-      signal.risk.lot = currentLot;
-
-      // Si hay señal y no es SILENCE, registrar en trades_history
-      if (signal.action === 'ENTRADA' && signal.direction) {
-        await supabase.from('trades_history').insert({
-          activo: asset,
-          precio_entrada: signal.price,
-          operacion: signal.direction,
-          tp: signal.risk.tp,
-          sl: signal.risk.sl
-        });
-
-        const message = `ACTIVO: ${asset}\nOPERACIÓN: ${signal.direction}\nPRECIO ENTRADA: ${signal.price.toFixed(2)}\nCONFIANZA: ${signal.probability.toFixed(2)}%\nS/L y T/P: SL ${signal.risk.sl.toFixed(2)}, TP ${signal.risk.tp.toFixed(2)}`;
-        await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
-      }
-
-      console.log(`Procesado ${asset}: ${signal.action} ${signal.direction || ''}`);
-    } catch (err) {
-      console.error(`Error procesando ${asset}: ${err.message}`);
-    }
-  }
+  await scanMarkets(supabase, bot, CHAT_ID, currentLot);
 }
 
-// Comandos de Telegram (sin cambios)
-bot.start((ctx) => ctx.reply('Bienvenido a Sniper V6. Usa /help para comandos.'));
-bot.help((ctx) => ctx.reply('*Comandos:*\n/start - Iniciar\n/help - Ayuda\n/status - Estado del radar y lote\n/lote [valor] - Cambiar lote\n/stop - Pausar radar\n/go - Reanudar radar\n/aprender - Calibración masiva\n/limpiar - Borrar datos viejos', { parse_mode: 'Markdown' }));
+// Comandos de Telegram
+bot.start((ctx) => ctx.reply('Bienvenido a Sniper V6 Scalping. Usa /help para comandos.'));
+bot.help((ctx) => ctx.reply('*Comandos:*\n/start - Iniciar\n/help - Ayuda\n/status - Estado del radar y lote\n/lote [valor] - Cambiar lote\n/stop - Pausar radar\n/go - Reanudar radar\n/winrate - Estadísticas de winrate últimas 24h\n/aprender - Calibración masiva\n/limpiar - Borrar datos viejos', { parse_mode: 'Markdown' }));
 bot.command('status', (ctx) => {
   const status = radarActive ? 'Activo' : 'Pausado';
   ctx.reply(`Radar: ${status}\nLote actual: ${currentLot}`, { parse_mode: 'Markdown' });
@@ -153,8 +108,28 @@ bot.command('go', (ctx) => {
   radarActive = true;
   ctx.reply('Radar reanudado');
 });
+bot.command('winrate', async (ctx) => {
+  try {
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const { data: trades, error } = await supabase
+      .from('trades_history')
+      .select('estado')
+      .gte('created_at', yesterday);
+
+    if (error) throw error;
+
+    const wins = trades.filter(t => t.estado === 'WIN').length;
+    const losses = trades.filter(t => t.estado === 'LOSS').length;
+    const total = wins + losses;
+    const winrate = total > 0 ? ((wins / total) * 100).toFixed(2) : 0;
+
+    ctx.reply(`Winrate últimas 24h: ${wins} ganadas, ${losses} perdidas (${winrate}%)`, { parse_mode: 'Markdown' });
+  } catch (err) {
+    ctx.reply('Error calculando winrate');
+  }
+});
 bot.command('aprender', async (ctx) => {
-  await processAssets();
+  await performScan();
   ctx.reply('Calibración masiva completada');
 });
 bot.command('limpiar', async (ctx) => {
@@ -167,11 +142,11 @@ bot.command('limpiar', async (ctx) => {
 });
 
 // Servidor Express
-app.get('/', (req, res) => res.send('Sniper V6 corriendo'));
+app.get('/', (req, res) => res.send('Sniper V6 Scalping corriendo'));
 app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
 
-// Bucle de análisis cada 15 minutos (900000 ms)
-setInterval(processAssets, 900000);
+// Bucle de escaneo cada 15 minutos (900000 ms)
+setInterval(performScan, 900000);
 
 // Verificación de PnL cada minuto (60000 ms)
 setInterval(checkAndCloseTrades, 60000);
