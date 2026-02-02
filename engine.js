@@ -1,12 +1,12 @@
 async function analyze(supabase, asset, currentPrice, spread) {
   try {
-    // Obtener los últimos 10 precios de Supabase (pero ahora solo requiere 3 para calcular)
+    // Obtener los últimos precios de Supabase (requiere solo 3 para calcular)
     const { data: prices, error } = await supabase
       .from('learning_db')
       .select('price')
       .eq('asset', asset)
       .order('created_at', { ascending: false })
-      .limit(10);
+      .limit(10); // Limitamos a 10 para cálculo, pero umbral es 3
 
     if (error) throw error;
 
@@ -29,10 +29,10 @@ async function analyze(supabase, asset, currentPrice, spread) {
       action = 'PRE-ALERTA';
     }
 
-    // Riesgo básico: SL -2%, TP +5%, lote dinámico (asumido 1 por defecto, ajustable externamente)
+    // Riesgo básico: SL -2%, TP +5%, lote dinámico
     const sl = currentPrice * 0.98;
     const tp = currentPrice * 1.05;
-    const lot = 1; // Dinámico, se ajusta desde index.js
+    const lot = 1; // Ajustable desde index.js
 
     return { action, probability: confidence, price: currentPrice, risk: { sl, tp, lot } };
   } catch (err) {
