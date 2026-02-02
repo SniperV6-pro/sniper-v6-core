@@ -7,7 +7,6 @@ module.exports = {
         STOP_LOSS_PCT: 0.003,
         TAKE_PROFIT_PCT: 0.006,
         MAX_SPREAD_ALLOWED: 100,
-        // ABANICO DE 10 MERCADOS REALES
         RADAR_ASSETS: [
             'PAXGUSD', 'BTCUSD', 'ETHUSD', 'SOLUSD', 'XRPUSD', 
             'EURUSD', 'GBPUSD', 'NAS100', 'US30', 'LTCUSD'
