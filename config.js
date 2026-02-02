@@ -1,34 +1,34 @@
 /**
  * CTIPROV6 - CONFIGURACIÓN GLOBAL PROFESIONAL
- * 10 Mercados + Filtro de Spread + Autonomía
+ * Versión: Abanico de 10 Mercados + Seguridad Anti-Spread
  */
 
 module.exports = {
     STRATEGY: {
-        // --- PARÁMETROS DE INTELIGENCIA ---
-        MIN_CONFIDENCE: 70,         // Umbral de activación para señales
-        MIN_VOLATILITY: 0.0001,     // Sensibilidad para detectar micro-movimientos
-        TREND_THRESHOLD: 0.0005,    // Sensibilidad de tendencia
+        // --- SENSIBILIDAD ---
+        MIN_CONFIDENCE: 70,         // Probabilidad mínima para disparar alerta
+        MIN_VOLATILITY: 0.0001,     // Sensibilidad para detectar movimientos lentos
+        TREND_THRESHOLD: 0.0005,    
         
-        // --- GESTIÓN DE RIESGO ---
-        RISK_REWARD_RATIO: 2.0,     // Ganar el doble de lo arriesgado
-        STOP_LOSS_PCT: 0.003,       // SL al 0.3% (Protección de cuenta pequeña)
+        // --- GESTIÓN DE RIESGO (Cuenta $20) ---
+        RISK_REWARD_RATIO: 2.0,     
+        STOP_LOSS_PCT: 0.003,       // SL ajustado al 0.3%
         TAKE_PROFIT_PCT: 0.006,     // TP al 0.6%
         
-        // --- SEGURIDAD ANTI-SPREAD ---
-        MAX_SPREAD_ALLOWED: 100,    // Si el spread > 100 puntos, la señal se cancela automáticamente
+        // --- SEGURIDAD ---
+        MAX_SPREAD_ALLOWED: 100,    // Bloqueo si el spread > 100 (Protección contra XRP alto)
 
-        // --- ABANICO DE 10 MERCADOS (Liquidez y Bajo Spread) ---
+        // --- ABANICO DE 10 MERCADOS ---
         RADAR_ASSETS: [
             'PAXGUSD', // Oro
             'BTCUSD',  // Bitcoin
             'ETHUSD',  // Ethereum
             'SOLUSD',  // Solana
             'XRPUSD',  // Ripple
-            'EURUSD',  // Euro/Dolar (Forex)
-            'GBPUSD',  // Libra/Dolar (Forex)
-            'NAS100',  // Nasdaq (Índices)
-            'US30',    // Dow Jones (Índices)
+            'EURUSD',  // Euro/Dólar
+            'GBPUSD',  // Libra/Dólar
+            'NAS100',  // Nasdaq
+            'US30',    // Dow Jones
             'LTCUSD'   // Litecoin
         ],
         
@@ -36,7 +36,7 @@ module.exports = {
             'PAXGUSD': 'ORO (PAXG)',
             'BTCUSD': 'BITCOIN',
             'ETHUSD': 'ETHEREUM',
-            'SOLUSD': 'SOLANA',
+            'SOLANA': 'SOLANA',
             'XRPUSD': 'RIPPLE',
             'EURUSD': 'EURO/DOLAR',
             'GBPUSD': 'LIBRA/DOLAR',
@@ -46,6 +46,6 @@ module.exports = {
         }
     },
     
-    // --- TIEMPOS DE RESPUESTA ---
-    POLLING_INTERVAL: 60000 // Escaneo cada 60 segundos
+    // --- CICLOS ---
+    POLLING_INTERVAL: 60000 // Escaneo cada 1 minuto
 };
