@@ -20,7 +20,6 @@ const KRAKEN_PAIRS = {
   SOLUSD: 'SOLUSD',
   XRPUSD: 'XXRPZUSD',
   LTCUSD: 'XLTCZUSD',
-  // Nota: EURUSD, GBPUSD, NAS100, US30 no tienen pares directos en Kraken; se mapearán igual para intentar consulta, pero se capturará error.
   EURUSD: 'EURUSD',
   GBPUSD: 'GBPUSD',
   NAS100: 'NAS100',
@@ -28,11 +27,19 @@ const KRAKEN_PAIRS = {
 };
 
 const MAX_SPREAD = 100;
+const MAX_OPEN_TRADES = 3;  // Máximo 3 trades abiertos por activo
+const DAILY_LOSS_LIMIT = 100;  // Límite de pérdida diaria en USD (ajusta según lote)
+const RSI_PERIOD = 14;  // Período para RSI
+const EMA_PERIOD = 20;  // Período para EMA
 
 module.exports = {
   ASSETS,
   KRAKEN_PAIRS,
   MAX_SPREAD,
+  MAX_OPEN_TRADES,
+  DAILY_LOSS_LIMIT,
+  RSI_PERIOD,
+  EMA_PERIOD,
   SUPABASE_URL: process.env.SUPABASE_URL,
   SUPABASE_KEY: process.env.SUPABASE_KEY,
   TELEGRAM_TOKEN: process.env.TELEGRAM_TOKEN,
