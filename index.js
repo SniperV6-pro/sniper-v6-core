@@ -1,32 +1,55 @@
 require('dotenv').config();
+const winston = require('winston');
 
 if (!process.env.SUPABASE_KEY || !process.env.TELEGRAM_TOKEN) {
   throw new Error('ERROR: Faltan variables de entorno en Render');
 }
 
 const express = require('express');
-const axios = require('axios'); // Librería axios incluida
+const axios = require('axios');
 const { Telegraf } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 const { scanMarkets } = require('./scanner');
+const { trainMLModel } = require('./engine');
 const {
   SUPABASE_URL,
   SUPABASE_KEY,
   TELEGRAM_TOKEN,
   CHAT_ID,
   PORT,
-  KRAKEN_PAIRS // Agregado para resolver el error en checkAndCloseTrades
+  DAILY_LOSS_LIMIT
 } = require('./config');
 
 const app = express();
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const bot = new Telegraf(TELEGRAM_TOKEN);
 
+// Logger con Winston
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'logs/combined.log' })
+  ]
+});
+
 // Estado global
 let radarActive = true;
-let currentLot = 1; // Lote dinámico
+let currentLot = 1;
+let dailyPnL = 0;
+let lastReportDate = new Date().toDateString();
 
-// Función para verificar y cerrar trades (PnL cada minuto)
+// Entrenar modelo ML al inicio (simulación con datos históricos)
+(async () => {
+  const { data: historical } = await supabase.from('trades_history').select('*').limit(100);
+  if (historical) await trainMLModel(historical);
+})();
+
 async function checkAndCloseTrades() {
   try {
     const { data: openTrades, error } = await supabase
@@ -37,10 +60,8 @@ async function checkAndCloseTrades() {
     if (error) throw error;
 
     for (const trade of openTrades) {
-      // Obtener precio actual del activo
-      const krakenPair = KRAKEN_PAIRS[trade.activo]; // Ahora KRAKEN_PAIRS está definido
-      const response = await axios.get(`https://api.kraken.com/0/public/Ticker?pair=${krakenPair}`);
-      const data = response.data.result[krakenPair];
+      const krakenPair = KRAKEN_PAIRS[trade.activo];
+      const data = await fetchPriceWithRetry(krakenPair);
       const currentPrice = (parseFloat(data.a[0]) + parseFloat(data.b[0])) / 2;
 
       let profitLoss = 0;
@@ -65,99 +86,37 @@ async function checkAndCloseTrades() {
           .update({ estado: status, profit_loss: profitLoss, closed_at: new Date() })
           .eq('id', trade.id);
 
+        dailyPnL += profitLoss;
         const result = status === 'WIN' ? '✅ OPERACIÓN GANADA (WIN)' : '❌ OPERACIÓN PERDIDA (LOSS)';
         const message = `${result} en ${trade.activo}\nProfit/Loss: ${profitLoss.toFixed(2)}`;
         await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
+
+        logger.info(`Trade cerrado: ${trade.activo}, ${status}, PnL: ${profitLoss}`);
       }
     }
-  } catch (err) {
-    console.error('Error verificando trades:', err.message);
-  }
-}
 
-// Función de escaneo cada 15 minutos
-async function performScan() {
-  if (!radarActive) return;
-  await scanMarkets(supabase, bot, CHAT_ID, currentLot);
-}
-
-// Comandos de Telegram
-bot.start((ctx) => ctx.reply('Bienvenido a Sniper V6 Scalping. Usa /help para comandos.'));
-bot.help((ctx) => ctx.reply('*Comandos:*\n/start - Iniciar\n/help - Ayuda\n/status - Estado del radar y lote\n/lote [valor] - Cambiar lote\n/stop - Pausar radar\n/go - Reanudar radar\n/winrate - Estadísticas de winrate últimas 24h\n/aprender - Calibración masiva\n/limpiar - Borrar datos viejos', { parse_mode: 'Markdown' }));
-bot.command('status', (ctx) => {
-  const status = radarActive ? 'Activo' : 'Pausado';
-  ctx.reply(`Radar: ${status}\nLote actual: ${currentLot}`, { parse_mode: 'Markdown' });
-});
-bot.command('lote', (ctx) => {
-  const args = ctx.message.text.split(' ');
-  if (args.length > 1) {
-    const newLot = parseFloat(args[1]);
-    if (!isNaN(newLot) && newLot > 0) {
-      currentLot = newLot;
-      ctx.reply(`Lote cambiado a ${currentLot}`);
-    } else {
-      ctx.reply('Valor de lote inválido');
+    // Pausar si límite diario alcanzado
+    if (dailyPnL < -DAILY_LOSS_LIMIT) {
+      radarActive = false;
+      logger.warn('Límite de pérdida diaria alcanzado, radar pausado');
     }
-  } else {
-    ctx.reply('Uso: /lote [valor]');
+  } catch (err) {
+    logger.error('Error verificando trades:', err.message);
   }
-});
-bot.command('stop', (ctx) => {
-  radarActive = false;
-  ctx.reply('Radar pausado');
-});
-bot.command('go', (ctx) => {
-  radarActive = true;
-  ctx.reply('Radar reanudado');
-});
-bot.command('winrate', async (ctx) => {
-  try {
-    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const { data: trades, error } = await supabase
+}
+
+// Reporte diario
+async function sendDailyReport() {
+  const today = new Date().toDateString();
+  if (today !== lastReportDate) {
+    const { data: trades } = await supabase
       .from('trades_history')
       .select('estado')
-      .gte('created_at', yesterday);
-
-    if (error) throw error;
+      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000));
 
     const wins = trades.filter(t => t.estado === 'WIN').length;
     const losses = trades.filter(t => t.estado === 'LOSS').length;
-    const total = wins + losses;
-    const winrate = total > 0 ? ((wins / total) * 100).toFixed(2) : 0;
+    const winrate = total > 0 ? ((wins / (wins + losses)) * 100).toFixed(2) : 0;
 
-    ctx.reply(`Winrate últimas 24h: ${wins} ganadas, ${losses} perdidas (${winrate}%)`, { parse_mode: 'Markdown' });
-  } catch (err) {
-    ctx.reply('Error calculando winrate');
-  }
-});
-bot.command('aprender', async (ctx) => {
-  await performScan();
-  ctx.reply('Calibración masiva completada');
-});
-bot.command('limpiar', async (ctx) => {
-  const { error } = await supabase.from('learning_db').delete().lt('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
-  if (error) {
-    ctx.reply('Error limpiando datos');
-  } else {
-    ctx.reply('Datos viejos borrados');
-  }
-});
-
-// Servidor Express
-app.get('/', (req, res) => res.send('Sniper V6 Scalping corriendo'));
-app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
-
-// Bucle de escaneo cada 15 minutos (900000 ms)
-setInterval(performScan, 900000);
-
-// Verificación de PnL cada minuto (60000 ms)
-setInterval(checkAndCloseTrades, 60000);
-
-// Lanzar bot con retraso de 10 segundos para evitar 409
-setTimeout(() => {
-  bot.launch();
-}, 10000);
-
-// Graceful shutdown
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+    const message = `📊 REPORTE DIARIO:\nWins: ${wins}\nLosses: ${losses}\nWinrate: ${winrate}%\nPnL Diario: ${dailyPnL.toFixed(2)}`;
+    await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown
