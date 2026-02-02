@@ -1,47 +1,51 @@
 const axios = require('axios');
-const config = require('./config');
+const { analyze } = require('./engine');
+const { ASSETS, KRAKEN_PAIRS } = require('./config');
 
-/**
- * Módulo de Escaneo de Mercado de Alta Frecuencia
- * Obtiene Precio Real + Spread para validar la entrada.
- */
-async function getValidatedPrice() {
+async function scanMarkets(supabase, bot, CHAT_ID, currentLot) {
+  for (const asset of ASSETS) {
     try {
-        const pair = config.STRATEGY.ASSET;
-        // Solicitamos el Ticker completo a Kraken
-        const url = `https://api.kraken.com/0/public/Ticker?pair=${pair}`;
-        
-        const response = await axios.get(url, { timeout: 5000 });
-        
-        if (response.data.error && response.data.error.length > 0) {
-            console.error("⚠️ Error API Kraken:", response.data.error);
-            return null;
-        }
+      const krakenPair = KRAKEN_PAIRS[asset];
+      const response = await axios.get(`https://api.kraken.com/0/public/Ticker?pair=${krakenPair}`);
+      const data = response.data.result[krakenPair];
 
-        // Kraken devuelve un objeto con clave dinámica (ej: PAXGUSD o XPAXGZUSD)
-        const resultKey = Object.keys(response.data.result)[0];
-        const data = response.data.result[resultKey];
+      if (!data) throw new Error('No data from Kraken');
 
-        // Extracción de Datos Críticos para Scalping
-        const currentPrice = parseFloat(data.c[0]); // Precio último cierre
-        const bid = parseFloat(data.b[0]);          // Mejor oferta de compra
-        const ask = parseFloat(data.a[0]);          // Mejor oferta de venta
-        const spread = ask - bid;
+      const ask = parseFloat(data.a[0]);
+      const bid = parseFloat(data.b[0]);
+      const currentPrice = (ask + bid) / 2;
+      const spread = ask - bid;
 
-        // FILTRO DE PROTECCIÓN:
-        // Si el spread es absurdo (ej: mercado volátil o cerrado), el precio no es válido.
-        if (isNaN(currentPrice) || spread < 0) return null;
+      // Guardar precio en learning_db
+      await supabase.from('learning_db').insert({ asset, price: currentPrice });
 
-        return {
-            price: currentPrice,
-            spread: spread.toFixed(2),
-            volume: parseFloat(data.v[0]) // Volumen de hoy
-        };
+      // Analizar señal
+      const signal = await analyze(supabase, asset, currentPrice, spread);
+      signal.risk.lot = currentLot;
 
-    } catch (error) {
-        console.error("❌ Fallo en conexión con el mercado:", error.message);
-        return null;
+      // Enviar mensajes basados en acción
+      if (signal.action === 'PRE-ALERTA' && signal.direction) {
+        const message = `⚠️ PRE-ALERTA: ${asset} preparándose para ${signal.direction}`;
+        await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
+      } else if (signal.action === 'ENTRADA' && signal.direction) {
+        // Registrar en trades_history
+        await supabase.from('trades_history').insert({
+          activo: asset,
+          precio_entrada: signal.price,
+          operacion: signal.direction,
+          tp: signal.risk.tp,
+          sl: signal.risk.sl
+        });
+
+        const message = `🚀 ENTRADA CONFIRMADA: ${signal.direction}\nACTIVO: ${asset}\nPRECIO ENTRADA: ${signal.price.toFixed(2)}\nSL: ${signal.risk.sl.toFixed(2)}\nTP: ${signal.risk.tp.toFixed(2)}`;
+        await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
+      }
+
+      console.log(`Escaneado ${asset}: ${signal.action} ${signal.direction || ''}`);
+    } catch (err) {
+      console.error(`Error escaneando ${asset}: ${err.message}`);
     }
+  }
 }
 
-module.exports = { getValidatedPrice };
+module.exports = { scanMarkets };
