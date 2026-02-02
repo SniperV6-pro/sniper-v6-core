@@ -28,7 +28,56 @@ const bot = new Telegraf(TELEGRAM_TOKEN);
 let radarActive = true;
 let currentLot = 1; // Lote dinámico
 
-// Función para consultar Kraken y procesar
+// Función para verificar y cerrar trades (PnL)
+async function checkAndCloseTrades() {
+  try {
+    const { data: openTrades, error } = await supabase
+      .from('trades_history')
+      .select('*')
+      .eq('estado', 'abierta');
+
+    if (error) throw error;
+
+    for (const trade of openTrades) {
+      // Obtener precio actual del activo
+      const krakenPair = KRAKEN_PAIRS[trade.activo];
+      const response = await axios.get(`https://api.kraken.com/0/public/Ticker?pair=${krakenPair}`);
+      const data = response.data.result[krakenPair];
+      const currentPrice = (parseFloat(data.a[0]) + parseFloat(data.b[0])) / 2;
+
+      let profitLoss = 0;
+      let status = 'abierta';
+      if (trade.tipo === 'buy' && currentPrice >= trade.tp) {
+        status = 'cerrada_win';
+        profitLoss = (trade.tp - trade.precio_entrada) * currentLot;
+      } else if (trade.tipo === 'buy' && currentPrice <= trade.sl) {
+        status = 'cerrada_loss';
+        profitLoss = (trade.sl - trade.precio_entrada) * currentLot;
+      } else if (trade.tipo === 'sell' && currentPrice <= trade.tp) {
+        status = 'cerrada_win';
+        profitLoss = (trade.precio_entrada - trade.tp) * currentLot;
+      } else if (trade.tipo === 'sell' && currentPrice >= trade.sl) {
+        status = 'cerrada_loss';
+        profitLoss = (trade.precio_entrada - trade.sl) * currentLot;
+      }
+
+      if (status !== 'abierta') {
+        await supabase
+          .from('trades_history')
+          .update({ estado: status, profit_loss: profitLoss, closed_at: new Date() })
+          .eq('id', trade.id);
+
+        const result = status === 'cerrada_win' ? '✅ GANADA' : '❌ PERDIDA';
+        const message = `${result} en ${trade.activo}\nProfit/Loss: ${profitLoss.toFixed(2)}`;
+        await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
+      }
+    }
+  } catch (err) {
+    console.error('Error verificando trades:', err.message);
+  }
+}
+
+// Función para consultar Kraken y procesar (cada 15 min)
 async function processAssets() {
   if (!radarActive) return;
 
@@ -50,10 +99,19 @@ async function processAssets() {
 
       // Calcular señal
       const signal = await analyze(supabase, asset, currentPrice, spread);
-      signal.risk.lot = currentLot; // Aplicar lote dinámico
+      signal.risk.lot = currentLot;
 
-      // Evitar spam: Solo notificar para 'ENTRADA' con confianza >=75%
-      if (signal.action === 'ENTRADA' && signal.probability >= 75) {
+      // Si hay señal, registrar en trades_history
+      if (signal.action === 'ENTRADA' && signal.direction) {
+        const tipo = signal.direction.includes('BUY') ? 'buy' : 'sell';
+        await supabase.from('trades_history').insert({
+          activo: asset,
+          tipo,
+          precio_entrada: signal.price,
+          tp: signal.risk.tp,
+          sl: signal.risk.sl
+        });
+
         const message = `ACTIVO: ${asset}\nOPERACIÓN: ${signal.direction}\nPRECIO ENTRADA: ${signal.price.toFixed(2)}\nCONFIANZA: ${signal.probability.toFixed(2)}%\nS/L y T/P: SL ${signal.risk.sl.toFixed(2)}, TP ${signal.risk.tp.toFixed(2)}`;
         await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
       }
@@ -61,7 +119,6 @@ async function processAssets() {
       console.log(`Procesado ${asset}: ${signal.action} ${signal.direction || ''}`);
     } catch (err) {
       console.error(`Error procesando ${asset}: ${err.message}`);
-      // Continuar con el siguiente activo
     }
   }
 }
@@ -112,8 +169,11 @@ bot.command('limpiar', async (ctx) => {
 app.get('/', (req, res) => res.send('Sniper V6 corriendo'));
 app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
 
-// Bucle infinito cada 60s
-setInterval(processAssets, 60000);
+// Bucle de análisis cada 15 minutos (900000 ms)
+setInterval(processAssets, 900000);
+
+// Verificación de PnL cada minuto (60000 ms)
+setInterval(checkAndCloseTrades, 60000);
 
 // Lanzar bot con delay para evitar 409
 setTimeout(() => {
