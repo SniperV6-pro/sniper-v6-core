@@ -1,157 +1,126 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
-const { createClient } = require('@supabase/supabase-js');
-const axios = require('axios');
-const http = require('http'); // Servidor para evitar suspensión de Render
+const { createClient } = require('@supabase/supabase-client');
 const config = require('./config');
-const scanner = require('./scanner');
-const brain = require('./engine');
-const multiScanner = require('./multi_scanner');
-const journal = require('./journal');
+const engine = require('./engine');
+const axios = require('axios'); // Para capturar precios si usas API
 
+// --- INICIALIZACIÓN ---
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// --- 1. SERVIDOR DE VIDA (Responde a Render y Cron-job) ---
-http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.write('CTIPROV6 STATUS: OPERATIVO Y VIGILANDO');
-    res.end();
-}).listen(process.env.PORT || 3000, () => {
-    console.log("🚀 Servidor de vida activo en puerto " + (process.env.PORT || 3000));
+// Variable para el estado del radar
+let radarActivo = true;
+
+// --- FUNCIONES DE SOPORTE (CONEXIÓN AL BROKER) ---
+async function obtenerDatosMercado(asset) {
+    try {
+        // NOTA: Aquí debe ir tu URL o lógica real de captura de datos del MT5/Broker
+        // Por ahora, implementamos una estructura segura para el Engine
+        const response = await axios.get(`${process.env.BROKER_URL}/quote?symbol=${asset}`);
+        return {
+            price: parseFloat(response.data.price),
+            spread: parseInt(response.data.spread)
+        };
+    } catch (error) {
+        // Si el broker falla para un activo, devolvemos null para que el radar no explote
+        return null;
+    }
+}
+
+// --- COMANDO /APRENDER (AHORA PARA 10 MERCADOS) ---
+bot.command('aprender', async (ctx) => {
+    const total = config.STRATEGY.RADAR_ASSETS.length;
+    await ctx.reply(`🧠 Sniper V6: Iniciando calibración de ${total} mercados...`);
+
+    try {
+        for (const asset of config.STRATEGY.RADAR_ASSETS) {
+            const data = await obtenerDatosMercado(asset);
+            if (data) {
+                await supabase.from('learning_db').insert([{ 
+                    asset: asset, 
+                    price: data.price,
+                    created_at: new Date() 
+                }]);
+            }
+        }
+        await ctx.reply(`✅ Calibración exitosa. Abanico de ${total} activos sincronizado.`);
+    } catch (error) {
+        console.error("Error en calibración:", error);
+        await ctx.reply("❌ Error en calibración manual. El bot usará el auto-aprendizaje cada minuto.");
+    }
 });
 
-// --- 2. BUCLE DE RADAR Y SINCRONIZACIÓN ---
-async function timeSyncLoop() {
-    const now = new Date();
-    const min = now.getMinutes();
-    const hours = now.getHours();
-    
-    // Reporte Diario Automático a las 23:55
-    if (hours === 23 && min === 55) {
+// --- COMANDO /STATUS ---
+bot.command('status', async (ctx) => {
+    const total = config.STRATEGY.RADAR_ASSETS.length;
+    const lista = config.STRATEGY.RADAR_ASSETS.join(', ');
+    await ctx.reply(`🛰️ **ESTADO DEL RADAR**\n\n✅ Mercados Monitoreados: ${total}\n🛡️ Filtro Spread: ${config.STRATEGY.MAX_SPREAD_ALLOWED} pts\n📈 Activos: ${lista}\n🚀 Sistema: Operativo`);
+});
+
+// --- EL RADAR (ESCÁNER DINÁMICO) ---
+async function ejecutarRadar() {
+    if (!radarActivo) return;
+
+    console.log(`[${new Date().toLocaleTimeString()}] Escaneando abanico de 10 mercados...`);
+
+    for (const assetId of config.STRATEGY.RADAR_ASSETS) {
         try {
-            const dailySummary = await journal.getDailyReport(supabase);
-            bot.telegram.sendMessage(process.env.CHAT_ID, dailySummary, { parse_mode: 'Markdown' });
-        } catch (e) { console.error("Error reporte diario:", e.message); }
-    }
-
-    // Fases de Scalping: Pre-alerta y Confirmación
-    let phase = null;
-    if ([13, 28, 43, 58].includes(min)) {
-        phase = "PRE-ALERTA";
-    } else if ([0, 15, 30, 45].includes(min)) {
-        phase = "CONFIRMACIÓN";
-    }
-
-    if (phase) {
-        console.log(`[${now.toLocaleTimeString()}] Iniciando Radar: ${phase}`);
-        
-        for (const assetId of config.STRATEGY.RADAR_ASSETS) {
-            try {
-                const res = await axios.get(`https://api.kraken.com/0/public/Ticker?pair=${assetId}`);
-                const resultKey = Object.keys(res.data.result)[0];
-                const price = parseFloat(res.data.result[resultKey].c[0]);
-
-                if (phase === "CONFIRMACIÓN") {
-                    await supabase.from('learning_db').insert([{ 
-                        asset: assetId, 
-                        price: price 
-                    }]);
-                }
-
-                const analysis = await brain.analyze(supabase, price, phase, assetId);
-                const assetName = config.STRATEGY.ASSET_NAMES[assetId] || assetId;
-
-                if (analysis.probability >= config.STRATEGY.MIN_CONFIDENCE) {
-                    let emoji = phase === "PRE-ALERTA" ? "⚠️" : "🚀";
-                    let title = phase === "PRE-ALERTA" ? "PRE-ALERTA (Prepárese)" : "SEÑAL DE ENTRADA";
-                    
-                    bot.telegram.sendMessage(process.env.CHAT_ID, 
-                        `${emoji} *CTIPROV6 PRO: ${assetName}*\n` +
-                        `📌 *${title}*\n` +
-                        `-----------------------------\n` +
-                        `📊 Acción: *${analysis.action}*\n` +
-                        `🔥 Confianza: ${analysis.probability}%\n` +
-                        `💲 Precio: $${analysis.price}\n` +
-                        `📈 Tendencia: ${analysis.context.trend}\n` +
-                        `-----------------------------\n` +
-                        `🛡️ *LOTE: ${analysis.risk.lot}*\n` +
-                        `🛑 SL: $${analysis.risk.sl}\n` +
-                        `✅ TP: $${analysis.risk.tp}\n` +
-                        `💰 Balance Ref: $${analysis.risk.capital}`,
-                        { parse_mode: 'Markdown' }
-                    );
-                }
-            } catch (err) {
-                console.error(`Error radar ${assetId}:`, err.message);
+            const data = await obtenerDatosMercado(assetId);
+            
+            if (!data) {
+                console.log(`⚠️ No se pudo obtener datos de ${assetId}. Saltando...`);
+                continue;
             }
+
+            // Llamada al Engine con blindaje
+            const analysis = await engine.analyze(
+                supabase, 
+                data.price, 
+                "LIVE", 
+                assetId, 
+                data.spread
+            );
+
+            // Si el Engine da una señal válida (BUY/SELL) y pasa el filtro de confianza
+            if (analysis.action !== "WAIT" && analysis.probability >= config.STRATEGY.MIN_CONFIDENCE) {
+                const mensaje = `🎯 **SEÑAL CONFIRMADA**\n\n` +
+                                `💎 Activo: ${config.STRATEGY.ASSET_NAMES[assetId]}\n` +
+                                `💰 Orden: **${analysis.action}**\n` +
+                                `🔥 Confianza: ${analysis.probability}%\n` +
+                                `💵 Precio: ${analysis.price}\n\n` +
+                                `🛡️ **GESTIÓN DE RIESGO**\n` +
+                                `📏 Lote: ${analysis.risk.lot}\n` +
+                                `⛔ Stop Loss: ${analysis.risk.sl}\n` +
+                                `✅ Take Profit: ${analysis.risk.tp}\n\n` +
+                                `⚠️ Spread actual: ${data.spread} pts`;
+
+                await bot.telegram.sendMessage(process.env.CHAT_ID, mensaje, { parse_mode: 'Markdown' });
+            }
+
+            // Auto-aprendizaje: Guardamos el precio en cada ciclo para la media móvil
+            await supabase.from('learning_db').insert([{ 
+                asset: assetId, 
+                price: data.price 
+            }]);
+
+        } catch (error) {
+            console.error(`❌ Error analizando ${assetId}:`, error.message);
         }
     }
 }
 
-setInterval(timeSyncLoop, 60000);
+// --- SERVIDOR PARA RENDER (KEEP ALIVE) ---
+const express = require('express');
+const server = express();
+server.get('/', (req, res) => res.send('Sniper V6 Core: Running 10 Markets'));
+server.listen(process.env.PORT || 10000, () => console.log('🚀 Server Live'));
 
-// --- 3. COMANDOS DE CONTROL TOTAL ---
+// --- LANZAMIENTO ---
+bot.launch();
+setInterval(ejecutarRadar, config.POLLING_INTERVAL);
 
-bot.start((ctx) => ctx.reply("🎯 CTIPROV6 ULTIMATE ONLINE\nRadar de 6 mercados activo."));
-
-bot.command('testforce', async (ctx) => {
-    try {
-        const report = await multiScanner.getFullMarketScan();
-        ctx.replyWithMarkdown(`✅ *DIAGNÓSTICO CTIPROV6*\n${report}`);
-    } catch (e) { ctx.reply("❌ Error en diagnóstico."); }
-});
-
-bot.command('capital', (ctx) => {
-    const args = ctx.message.text.split(' ');
-    if (args.length < 2) return ctx.reply("⚠️ Uso: /capital [monto]");
-    const amount = parseFloat(args[1]);
-    if (isNaN(amount)) return ctx.reply("❌ Monto inválido.");
-    brain.setCapital(amount);
-    ctx.reply(`✅ Capital actualizado a $${amount}. Riesgo recalculado.`);
-});
-
-bot.command('aprender', async (ctx) => {
-    ctx.reply("🧠 Calibrando memoria de 6 mercados...");
-    try {
-        for (const assetId of config.STRATEGY.RADAR_ASSETS) {
-            const res = await axios.get(`https://api.kraken.com/0/public/OHLC?pair=${assetId}&interval=15`);
-            const pairKey = Object.keys(res.data.result)[0];
-            const points = res.data.result[pairKey].slice(-20).map(item => ({
-                asset: assetId, price: parseFloat(item[4])
-            }));
-            await supabase.from('learning_db').insert(points);
-        }
-        ctx.reply("✅ Radar Calibrado al 100%.");
-    } catch (e) { ctx.reply("❌ Error en calibración."); }
-});
-
-bot.command('mercados', async (ctx) => {
-    const report = await multiScanner.getFullMarketScan();
-    ctx.replyWithMarkdown(report);
-});
-
-bot.command('diario', async (ctx) => {
-    const summary = await journal.getDailyReport(supabase);
-    ctx.replyWithMarkdown(summary);
-});
-
-bot.command('señal', async (ctx) => {
-    try {
-        const marketData = await scanner.getValidatedPrice();
-        const analysis = await brain.analyze(supabase, marketData.price, "MANUAL", "PAXGUSD");
-        ctx.replyWithMarkdown(
-            `🔍 *ANÁLISIS MANUAL (ORO)*\n` +
-            `Acción: ${analysis.action} (${analysis.probability}%)\n` +
-            `Lote: ${analysis.risk.lot}\n` +
-            `SL: ${analysis.risk.sl} | TP: ${analysis.risk.tp}`
-        );
-    } catch (e) { ctx.reply("❌ Error en análisis manual."); }
-});
-
-bot.launch({ dropPendingUpdates: true });
-
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('Rechazo no manejado:', reason);
-});
-    
+// Graceful stop
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
+           
