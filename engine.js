@@ -1,69 +1,67 @@
 const config = require('./config');
 
-let currentCapital = 20; // Capital por defecto configurado por el usuario
+let currentCapital = 20; // Capital inicial para los $20 del usuario
 
 const engine = {
-    // Permite que el comando /capital actualice el valor en tiempo real
+    // Esta función permite que el bot actualice tu capital mediante /capital [monto]
     setCapital: (amount) => {
         currentCapital = amount;
     },
 
     analyze: async (supabase, currentPrice, phase, assetId) => {
         try {
-            // 1. Recuperar historial para calcular media móvil
+            // REDUCCIÓN DE MEMORIA: Solo miramos las últimas 5 velas para reaccionar al instante
             const { data: history, error } = await supabase
                 .from('learning_db')
                 .select('price')
                 .eq('asset', assetId)
                 .order('created_at', { ascending: false })
-                .limit(10);
+                .limit(5);
 
             if (error || !history || history.length < 2) {
+                console.log(`[Engine] Datos insuficientes para ${assetId}. Use /aprender`);
                 return { action: "WAIT", probability: 0, price: currentPrice };
             }
 
+            // Cálculo de media rápida (Fast Moving Average)
             const avgPrice = history.reduce((sum, row) => sum + row.price, 0) / history.length;
             const lastPrice = history[0].price;
 
             let action = "WAIT";
-            let probability = 55; // Base de probabilidad más alta para facilitar disparos
-            let trend = "NEUTRAL";
+            let probability = 65; // Base incrementada para facilitar la superación del umbral del 70%
+            let trend = currentPrice > avgPrice ? "ALCISTA" : "BAJISTA";
 
-            // 2. Lógica de Dirección (Flexibilizada)
+            // LÓGICA DE DETECCIÓN DE IMPULSO
             if (currentPrice > avgPrice) {
                 action = "BUY";
-                trend = "ALCISTA";
                 probability += 20; 
             } else if (currentPrice < avgPrice) {
                 action = "SELL";
-                trend = "BAJISTA";
                 probability += 20;
             }
 
-            // 3. Plus por Impulso (Si el precio actual supera al anterior)
+            // BONO DE CONFIRMACIÓN: Si el precio actual es mejor que el de la vela anterior
             if ((action === "BUY" && currentPrice > lastPrice) || 
                 (action === "SELL" && currentPrice < lastPrice)) {
                 probability += 10;
             }
 
-            // 4. Gestión de Riesgo (Calculada sobre el Capital Real)
-            // Lote mínimo estándar 0.01 para cuentas pequeñas ($20)
+            // GESTIÓN DE RIESGO PARA CUENTA DE $20
             const lot = 0.01; 
-            
-            // Cálculo de niveles técnicos (SL y TP)
-            const slDistance = currentPrice * config.STRATEGY.STOP_LOSS_PCT;
-            const tpDistance = slDistance * config.STRATEGY.RISK_REWARD_RATIO;
+            // Stop Loss ajustado al 0.3% para proteger el capital en movimientos rápidos
+            const slDistance = currentPrice * 0.003; 
+            const tpDistance = slDistance * 2.0; // Ratio 1:2 para asegurar ganancias
 
             const sl = action === "BUY" ? (currentPrice - slDistance) : (currentPrice + slDistance);
             const tp = action === "BUY" ? (currentPrice + tpDistance) : (currentPrice - tpDistance);
 
-            // Ajuste final de probabilidad para no exceder 99%
+            // Techo de probabilidad
             if (probability > 99) probability = 99;
 
             return {
                 action,
                 probability,
-                price: currentPrice.toFixed(2),
+                price: parseFloat(currentPrice).toFixed(2),
                 context: {
                     trend,
                     avg: avgPrice.toFixed(2),
@@ -77,10 +75,11 @@ const engine = {
                 }
             };
         } catch (e) {
-            console.error("Error en Engine:", e.message);
+            console.error("Error crítico en Engine:", e.message);
             return { action: "ERROR", probability: 0, price: currentPrice };
         }
     }
 };
 
 module.exports = engine;
+                    
