@@ -45,28 +45,28 @@ async function processAssets() {
       const currentPrice = (ask + bid) / 2;
       const spread = ask - bid;
 
-      // Guardar en Supabase usando columna 'price'
+      // Guardar en Supabase
       await supabase.from('learning_db').insert({ asset, price: currentPrice });
 
       // Calcular señal
       const signal = await analyze(supabase, asset, currentPrice, spread);
       signal.risk.lot = currentLot; // Aplicar lote dinámico
 
-      // Modo silencioso: Solo notificar para 'PRE-ALERTA' o 'ENTRADA' (no 'LEARNING' ni confianza 0%)
-      if (signal.action === 'PRE-ALERTA' || signal.action === 'ENTRADA') {
-        const message = `*${signal.action}* en ${asset}\nPrecio: ${signal.price.toFixed(2)}\nConfianza: ${signal.probability.toFixed(2)}%\nSL: ${signal.risk.sl.toFixed(2)}, TP: ${signal.risk.tp.toFixed(2)}, Lote: ${signal.risk.lot}`;
+      // Evitar spam: Solo notificar para 'ENTRADA' con confianza >=75%
+      if (signal.action === 'ENTRADA' && signal.probability >= 75) {
+        const message = `ACTIVO: ${asset}\nOPERACIÓN: ${signal.direction}\nPRECIO ENTRADA: ${signal.price.toFixed(2)}\nCONFIANZA: ${signal.probability.toFixed(2)}%\nS/L y T/P: SL ${signal.risk.sl.toFixed(2)}, TP ${signal.risk.tp.toFixed(2)}`;
         await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
       }
 
-      console.log(`Procesado ${asset}: ${signal.action}`);
+      console.log(`Procesado ${asset}: ${signal.action} ${signal.direction || ''}`);
     } catch (err) {
       console.error(`Error procesando ${asset}: ${err.message}`);
-      // Robustez: Ignorar este activo y continuar con el siguiente sin detener el bot
+      // Continuar con el siguiente activo
     }
   }
 }
 
-// Comandos de Telegram
+// Comandos de Telegram (sin cambios)
 bot.start((ctx) => ctx.reply('Bienvenido a Sniper V6. Usa /help para comandos.'));
 bot.help((ctx) => ctx.reply('*Comandos:*\n/start - Iniciar\n/help - Ayuda\n/status - Estado del radar y lote\n/lote [valor] - Cambiar lote\n/stop - Pausar radar\n/go - Reanudar radar\n/aprender - Calibración masiva\n/limpiar - Borrar datos viejos', { parse_mode: 'Markdown' }));
 bot.command('status', (ctx) => {
@@ -100,7 +100,7 @@ bot.command('aprender', async (ctx) => {
   ctx.reply('Calibración masiva completada');
 });
 bot.command('limpiar', async (ctx) => {
-  const { error } = await supabase.from('learning_db').delete().lt('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)); // Borrar >30 días
+  const { error } = await supabase.from('learning_db').delete().lt('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
   if (error) {
     ctx.reply('Error limpiando datos');
   } else {
