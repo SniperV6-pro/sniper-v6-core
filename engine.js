@@ -1,6 +1,6 @@
 async function analyze(supabase, asset, currentPrice, spread) {
   try {
-    // Obtener los últimos 10 precios de Supabase
+    // Obtener los últimos 10 precios de Supabase (pero ahora solo requiere 3 para calcular)
     const { data: prices, error } = await supabase
       .from('learning_db')
       .select('price')
@@ -10,7 +10,7 @@ async function analyze(supabase, asset, currentPrice, spread) {
 
     if (error) throw error;
 
-    if (prices.length < 10) {
+    if (prices.length < 3) {
       return { action: 'LEARNING', probability: 0, price: currentPrice, risk: { sl: 0, tp: 0, lot: 0 } };
     }
 
