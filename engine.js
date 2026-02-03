@@ -1,5 +1,3 @@
-const tf = require('@tensorflow/tfjs');
-
 function calculateRSI(prices, period) {
   const gains = [];
   const losses = [];
@@ -41,21 +39,6 @@ function calculateBollingerBands(prices, period = 20, stdDevMultiplier = 2) {
   };
 }
 
-let mlModel;
-async function trainMLModel(historicalData) {
-  const inputs = historicalData.map(d => [d.price, d.confidence, d.rsi, d.macd]);
-  const outputs = historicalData.map(d => d.win ? 1 : 0);
-  const inputTensor = tf.tensor3d([inputs], [1, inputs.length, 4]);
-  const outputTensor = tf.tensor2d(outputs, [outputs.length, 1]);
-
-  mlModel = tf.sequential();
-  mlModel.add(tf.layers.lstm({ inputShape: [inputs.length, 4], units: 50, returnSequences: false }));
-  mlModel.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
-  mlModel.compile({ optimizer: 'adam', loss: 'binaryCrossentropy', metrics: ['accuracy'] });
-
-  await mlModel.fit(inputTensor, outputTensor, { epochs: 20 });
-}
-
 async function analyze(supabase, asset, currentPrice, spread) {
   try {
     const { data: prices, error } = await supabase
@@ -95,13 +78,6 @@ async function analyze(supabase, asset, currentPrice, spread) {
       }
     }
 
-    let mlPrediction = 0.5;
-    if (mlModel) {
-      const prediction = mlModel.predict(tf.tensor3d([[priceValues.slice(-20), confidence, rsi, macd]], [1, 20, 4]));
-      mlPrediction = prediction.dataSync()[0];
-      confidence = (confidence + mlPrediction * 100) / 2;
-    }
-
     let action = 'WAIT';
     if (spread > 100) {
       action = 'WAIT_SPREAD';
@@ -131,4 +107,4 @@ async function analyze(supabase, asset, currentPrice, spread) {
   }
 }
 
-module.exports = { analyze, trainMLModel };
+module.exports = { analyze };
