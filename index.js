@@ -16,9 +16,7 @@ const {
   SUPABASE_KEY,
   TELEGRAM_TOKEN,
   CHAT_ID,
-  PORT,
-  DAILY_LOSS_LIMIT,
-  KRAKEN_PAIRS
+  PORT
 } = require('./config');
 
 const app = express();
@@ -104,11 +102,6 @@ async function checkAndCloseTrades() {
         logger.info(`Trade cerrado: ${trade.activo}, ${status}, PnL: ${profitLoss}`);
       }
     }
-
-    if (dailyPnL < -DAILY_LOSS_LIMIT) {
-      radarActive = false;
-      logger.warn('Límite de pérdida diaria alcanzado, radar pausado');
-    }
   } catch (err) {
     logger.error('Error verificando trades:', err.message);
   }
@@ -140,7 +133,7 @@ async function performScan() {
 }
 
 bot.start((ctx) => ctx.reply('Bienvenido a Sniper V6 Scalping. Usa /help para comandos.'));
-bot.help((ctx) => ctx.reply('*Comandos:*\n/start - Iniciar\n/help - Ayuda\n/status - Estado del radar y lote\n/lote [valor] - Cambiar lote\n/stop - Pausar radar\n/go - Reanudar radar\n/winrate - Estadísticas de winrate últimas 24h\n/balance - Balance acumulado y PnL diario\n/aprender - Calibración masiva\n/limpiar - Borrar datos viejos', { parse_mode: 'Markdown' }));
+bot.help((ctx) => ctx.reply('*Comandos:*\n/start - Iniciar\n/help - Ayuda\n/status - Estado del radar y lote\n/lote [valor] - Cambiar lote\n/stop - Pausar radar\n/go - Reanudar radar\n/winrate - Estadísticas de winrate últimas 24h\n/balance - Balance acumulado y PnL diario\n/aprender - Calibración masiva\n/limpiar - Borrar datos viejos\n/reset - Resetear PnL diario y reactivar radar', { parse_mode: 'Markdown' }));
 bot.command('status', (ctx) => {
   const status = radarActive ? 'Activo' : 'Pausado';
   ctx.reply(`Radar: ${status}\nLote actual: ${currentLot}`, { parse_mode: 'Markdown' });
@@ -195,6 +188,11 @@ bot.command('balance', async (ctx) => {
   } catch (err) {
     ctx.reply('Error obteniendo balance');
   }
+});
+bot.command('reset', (ctx) => {
+  dailyPnL = 0;
+  radarActive = true;
+  ctx.reply('PnL diario reseteado y radar reactivado.');
 });
 bot.command('aprender', async (ctx) => {
   await performScan();
