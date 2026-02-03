@@ -98,4 +98,137 @@ async function checkAndCloseTrades() {
       if (status !== 'OPEN') {
         await supabase
           .from('trades_history')
-          .update({ estado: status, profit_loss
+          .update({ estado: status, profit_loss: profitLoss, closed_at: new Date() })
+          .eq('id', trade.id);
+
+        dailyPnL += profitLoss;
+        const result = status === 'WIN' ? '✅ OPERACIÓN GANADA (WIN)' : '❌ OPERACIÓN PERDIDA (LOSS)';
+        const message = `${result} en ${trade.activo}\nProfit/Loss: ${profitLoss.toFixed(2)}`;
+        await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
+
+        logger.info(`Trade cerrado: ${trade.activo}, ${status}, PnL: ${profitLoss}`);
+      }
+    }
+  } catch (err) {
+    logger.error('Error verificando trades:', err.message);
+  }
+}
+
+async function sendDailyReport() {
+  const today = new Date().toDateString();
+  if (today !== lastReportDate) {
+    const { data: trades } = await supabase
+      .from('trades_history')
+      .select('estado')
+      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000));
+
+    const wins = trades.filter(t => t.estado === 'WIN').length;
+    const losses = trades.filter(t => t.estado === 'LOSS').length;
+    const total = wins + losses;
+    const winrate = total > 0 ? ((wins / total) * 100).toFixed(2) : 0;
+
+    const message = `📊 REPORTE DIARIO:\nWins: ${wins}\nLosses: ${losses}\nWinrate: ${winrate}%\nPnL Diario: ${dailyPnL.toFixed(2)}`;
+    await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
+    lastReportDate = today;
+    dailyPnL = 0;
+  }
+}
+
+async function performScan() {
+  if (!radarActive) return;
+  await scanMarkets(supabase, bot, CHAT_ID, currentLot);
+}
+
+bot.start((ctx) => ctx.reply('Bienvenido a Sniper V6 Scalping. Usa /help para comandos.'));
+bot.help((ctx) => ctx.reply('*Comandos:*\n/start - Iniciar\n/help - Ayuda\n/status - Estado del radar y lote\n/lote [valor] - Cambiar lote\n/stop - Pausar radar\n/go - Reanudar radar\n/winrate - Estadísticas de winrate últimas 24h\n/balance - Balance acumulado y PnL diario\n/aprender - Calibración masiva\n/limpiar - Borrar datos viejos\n/reset - Resetear PnL diario y reactivar radar', { parse_mode: 'Markdown' }));
+bot.command('status', (ctx) => {
+  const status = radarActive ? 'Activo' : 'Pausado';
+  ctx.reply(`Radar: ${status}\nLote actual: ${currentLot}`, { parse_mode: 'Markdown' });
+});
+bot.command('lote', (ctx) => {
+  const args = ctx.message.text.split(' ');
+  if (args.length > 1) {
+    const newLot = parseFloat(args[1]);
+    if (!isNaN(newLot) && newLot > 0) {
+      currentLot = newLot;
+      ctx.reply(`Lote cambiado a ${currentLot}`);
+    } else {
+      ctx.reply('Valor de lote inválido');
+    }
+  } else {
+    ctx.reply('Uso: /lote [valor]');
+  }
+});
+bot.command('stop', (ctx) => {
+  radarActive = false;
+  ctx.reply('Radar pausado');
+});
+bot.command('go', (ctx) => {
+  radarActive = true;
+  ctx.reply('Radar reanudado');
+});
+bot.command('winrate', async (ctx) => {
+  try {
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const { data: trades, error } = await supabase
+      .from('trades_history')
+      .select('estado')
+      .gte('created_at', yesterday);
+
+    if (error) throw error;
+
+    const wins = trades.filter(t => t.estado === 'WIN').length;
+    const losses = trades.filter(t => t.estado === 'LOSS').length;
+    const total = wins + losses;
+    const winrate = total > 0 ? ((wins / total) * 100).toFixed(2) : 0;
+
+    ctx.reply(`Winrate últimas 24h: ${wins} ganadas, ${losses} perdidas (${winrate}%)`, { parse_mode: 'Markdown' });
+  } catch (err) {
+    ctx.reply('Error calculando winrate');
+  }
+});
+bot.command('balance', async (ctx) => {
+  try {
+    const { data: trades } = await supabase.from('trades_history').select('profit_loss');
+    const totalPnL = trades.reduce((sum, t) => sum + (t.profit_loss || 0), 0);
+    ctx.reply(`Balance Acumulado: ${totalPnL.toFixed(2)}\nPnL Diario: ${dailyPnL.toFixed(2)}`, { parse_mode: 'Markdown' });
+  } catch (err) {
+    ctx.reply('Error obteniendo balance');
+  }
+});
+bot.command('reset', (ctx) => {
+  dailyPnL = 0;
+  radarActive = true;
+  ctx.reply('PnL diario reseteado y radar reactivado.');
+});
+bot.command('aprender', async (ctx) => {
+  await performScan();
+  ctx.reply('Calibración masiva completada');
+});
+bot.command('limpiar', async (ctx) => {
+  const { error } = await supabase.from('learning_db').delete().lt('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+  if (error) {
+    ctx.reply('Error limpiando datos');
+  } else {
+    ctx.reply('Datos viejos borrados');
+  }
+});
+
+app.get('/', (req, res) => res.send('Sniper V6 Scalping corriendo'));
+app.get('/dashboard', async (req, res) => {
+  const { data: trades } = await supabase.from('trades_history').select('*');
+  res.json(trades);
+});
+
+app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
+
+setInterval(performScan, 900000);
+setInterval(checkAndCloseTrades, 60000);
+setInterval(sendDailyReport, 24 * 60 * 60 * 1000);
+
+setTimeout(() => {
+  bot.launch();
+}, 10000);
+
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
