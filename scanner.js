@@ -1,9 +1,10 @@
 const axios = require('axios');
 const { analyze } = require('./engine');
-const { ASSETS, KRAKEN_PAIRS, MAX_OPEN_TRADES } = require('./config');
+const { ASSETS, KRAKEN_PAIRS, ALPHA_VANTAGE_API_KEY } = require('./config');
+const sentiment = require('sentiment');
 
-// Cache simple para precios (evita lecturas repetidas)
 const priceCache = new Map();
+const analyzer = new sentiment();
 
 async function fetchPriceWithRetry(krakenPair, retries = 3) {
   for (let i = 0; i < retries; i++) {
@@ -12,7 +13,7 @@ async function fetchPriceWithRetry(krakenPair, retries = 3) {
       return response.data.result[krakenPair];
     } catch (err) {
       if (i === retries - 1) throw err;
-      await new Promise(res => setTimeout(res, 1000));  // Delay 1s
+      await new Promise(res => setTimeout(res, 1000));
     }
   }
 }
@@ -24,28 +25,30 @@ async function scanMarkets(supabase, bot, CHAT_ID, currentLot) {
       if (!krakenPair) continue;
 
       const data = await fetchPriceWithRetry(krakenPair);
-      if (!data || !data.a || !data.b) throw new Error('No data from Kraken');
+      if (!data) continue;
 
       const ask = parseFloat(data.a[0]);
       const bid = parseFloat(data.b[0]);
-      if (isNaN(ask) || isNaN(bid)) throw new Error('Precios inválidos');
+      if (isNaN(ask) || isNaN(bid)) continue;
 
       const currentPrice = (ask + bid) / 2;
       const spread = ask - bid;
 
-      // Cache precio
       priceCache.set(asset, currentPrice);
 
-      // Guardar en learning_db
       await supabase.from('learning_db').insert({ asset, price: currentPrice });
 
-      // Verificar máximo trades abiertos
       const { data: openTrades } = await supabase
         .from('trades_history')
         .select('id')
         .eq('estado', 'OPEN')
         .eq('activo', asset);
-      if (openTrades.length >= MAX_OPEN_TRADES) continue;  // Saltar si límite alcanzado
+      if (openTrades.length >= 3) continue;
+
+      // Análisis de sentimiento
+      const newsResponse = await axios.get(`https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=${asset}&apikey=${ALPHA_VANTAGE_API_KEY}`);
+      const score = newsResponse.data.feed ? analyzer.analyze(newsResponse.data.feed[0].title).score : 0;
+      if (score < -0.5) continue; // Evita si negativo
 
       const signal = await analyze(supabase, asset, currentPrice, spread);
       signal.risk.lot = currentLot;
