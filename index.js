@@ -10,7 +10,7 @@ const axios = require('axios');
 const { Telegraf } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 const { scanMarkets } = require('./scanner');
-const { analyze } = require('./engine');  // Eliminé trainMLModel de la importación
+const { analyze } = require('./engine');
 const {
   SUPABASE_URL,
   SUPABASE_KEY,
@@ -41,8 +41,6 @@ let radarActive = true;
 let currentLot = 1;
 let dailyPnL = 0;
 let lastReportDate = new Date().toDateString();
-
-// Eliminé la llamada a trainMLModel aquí
 
 async function fetchPriceWithRetry(krakenPair, retries = 3) {
   for (let i = 0; i < retries; i++) {
