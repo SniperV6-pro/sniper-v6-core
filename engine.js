@@ -1,6 +1,5 @@
-const tf = require('@tensorflow/tfjs');  // Para ML básico
+const tf = require('@tensorflow/tfjs');
 
-// Función para calcular RSI
 function calculateRSI(prices, period) {
   const gains = [];
   const losses = [];
@@ -14,7 +13,6 @@ function calculateRSI(prices, period) {
   return 100 - (100 / (1 + avgGain / avgLoss));
 }
 
-// Función para calcular EMA
 function calculateEMA(prices, period) {
   const multiplier = 2 / (period + 1);
   let ema = prices[0];
@@ -24,21 +22,38 @@ function calculateEMA(prices, period) {
   return ema;
 }
 
-// Modelo ML simple para predecir win/loss (entrenado con datos históricos)
+function calculateMACD(prices) {
+  const ema12 = calculateEMA(prices, 12);
+  const ema26 = calculateEMA(prices, 26);
+  const macd = ema12 - ema26;
+  const signal = calculateEMA([macd], 9);
+  return { macd, signal, histogram: macd - signal };
+}
+
+function calculateBollingerBands(prices, period = 20, stdDevMultiplier = 2) {
+  const sma = prices.slice(-period).reduce((a, b) => a + b, 0) / period;
+  const variance = prices.slice(-period).reduce((sum, p) => sum + Math.pow(p - sma, 2), 0) / period;
+  const stdDev = Math.sqrt(variance);
+  return {
+    upper: sma + (stdDevMultiplier * stdDev),
+    middle: sma,
+    lower: sma - (stdDevMultiplier * stdDev)
+  };
+}
+
 let mlModel;
 async function trainMLModel(historicalData) {
-  // Simulación: Entrena con precios y resultados previos
-  const inputs = historicalData.map(d => [d.price, d.confidence]);
+  const inputs = historicalData.map(d => [d.price, d.confidence, d.rsi, d.macd]);
   const outputs = historicalData.map(d => d.win ? 1 : 0);
-  const inputTensor = tf.tensor2d(inputs);
+  const inputTensor = tf.tensor3d([inputs], [1, inputs.length, 4]);
   const outputTensor = tf.tensor2d(outputs, [outputs.length, 1]);
 
   mlModel = tf.sequential();
-  mlModel.add(tf.layers.dense({ inputShape: [2], units: 10, activation: 'relu' }));
+  mlModel.add(tf.layers.lstm({ inputShape: [inputs.length, 4], units: 50, returnSequences: false }));
   mlModel.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
   mlModel.compile({ optimizer: 'adam', loss: 'binaryCrossentropy', metrics: ['accuracy'] });
 
-  await mlModel.fit(inputTensor, outputTensor, { epochs: 10 });
+  await mlModel.fit(inputTensor, outputTensor, { epochs: 20 });
 }
 
 async function analyze(supabase, asset, currentPrice, spread) {
@@ -48,7 +63,7 @@ async function analyze(supabase, asset, currentPrice, spread) {
       .select('price')
       .eq('asset', asset)
       .order('created_at', { ascending: false })
-      .limit(50);  // Más datos para indicadores
+      .limit(50);
 
     if (error) throw error;
 
@@ -62,44 +77,47 @@ async function analyze(supabase, asset, currentPrice, spread) {
     const stdDev = Math.sqrt(variance);
     let confidence = Math.max(0, Math.min(100, 100 - (stdDev / avg * 100)));
 
-    // Indicadores adicionales
     const rsi = calculateRSI(priceValues, 14);
     const ema = calculateEMA(priceValues, 20);
+    const { macd, signal, histogram } = calculateMACD(priceValues);
+    const bb = calculateBollingerBands(priceValues);
 
-    // Ajuste de confianza con indicadores
-    if ((currentPrice > avg && rsi < 30) || (currentPrice < avg && rsi > 70)) {
-      confidence += 10;  // Boost si confirma sobreventa/sobrecompra
+    let direction = null;
+    if (currentPrice > ema && macd > signal && currentPrice > bb.middle) {
+      direction = 'COMPRA';
+    } else if (currentPrice < ema && macd < signal && currentPrice < bb.middle) {
+      direction = 'VENTA';
     }
 
-    // Predicción ML (si modelo entrenado)
+    if (direction) {
+      if ((direction === 'COMPRA' && rsi < 30) || (direction === 'VENTA' && rsi > 70)) {
+        confidence += 15;
+      }
+    }
+
     let mlPrediction = 0.5;
     if (mlModel) {
-      const prediction = mlModel.predict(tf.tensor2d([[currentPrice, confidence]]));
+      const prediction = mlModel.predict(tf.tensor3d([[priceValues.slice(-20), confidence, rsi, macd]], [1, 20, 4]));
       mlPrediction = prediction.dataSync()[0];
-      confidence = (confidence + mlPrediction * 100) / 2;  // Promedio con ML
+      confidence = (confidence + mlPrediction * 100) / 2;
     }
 
     let action = 'WAIT';
-    let direction = null;
     if (spread > 100) {
       action = 'WAIT_SPREAD';
-    } else if (confidence > 85) {
+    } else if (confidence > 85 && direction) {
       action = 'ENTRADA';
-      direction = currentPrice > ema ? 'COMPRA' : 'VENTA';  // Usa EMA para dirección
-    } else if (confidence >= 70) {
+    } else if (confidence >= 70 && direction) {
       action = 'PRE-ALERTA';
-      direction = currentPrice > ema ? 'COMPRA' : 'VENTA';
     }
 
-    // SL/TP dinámicos basados en volatilidad
-    const volatilityFactor = stdDev / avg;
     let sl, tp;
     if (direction === 'COMPRA') {
-      sl = currentPrice * (1 - volatilityFactor * 1.5);  // SL más amplio si volátil
-      tp = currentPrice * (1 + volatilityFactor * 2);
+      sl = currentPrice * (1 - stdDev / avg * 1.5);
+      tp = currentPrice * (1 + stdDev / avg * 2);
     } else if (direction === 'VENTA') {
-      sl = currentPrice * (1 + volatilityFactor * 1.5);
-      tp = currentPrice * (1 - volatilityFactor * 2);
+      sl = currentPrice * (1 + stdDev / avg * 1.5);
+      tp = currentPrice * (1 - stdDev / avg * 2);
     } else {
       sl = 0;
       tp = 0;
