@@ -5,26 +5,14 @@ const CHAT_ID = process.env.CHAT_ID;
 const PORT = process.env.PORT || 10000;
 const ALPHA_VANTAGE_API_KEY = process.env.ALPHA_VANTAGE_API_KEY;
 
-// Mercados compatibles con Exness (removidos ADAUSD, DOTUSD, UNIUSD)
+// Solo BTCUSD por ahora (único compatible con Exness confirmado)
 const ASSETS = [
-  'PAXGUSD',  // Oro
-  'BTCUSD',   // Bitcoin
-  'ETHUSD',   // Ethereum
-  'SOLUSD',   // Solana
-  'XRPUSD',   // Ripple
-  'LTCUSD',   // Litecoin
-  'LINKUSD'   // Chainlink
+  'BTCUSD'    // Bitcoin - Compatible con Exness
 ];
 
 // Pares Kraken para los activos
 const KRAKEN_PAIRS = {
-  'PAXGUSD': 'PAXGUSD',
-  'BTCUSD': 'XXBTZUSD',
-  'ETHUSD': 'XETHZUSD',
-  'SOLUSD': 'SOLUSD',
-  'XRPUSD': 'XXRPZUSD',
-  'LTCUSD': 'XLTCZUSD',
-  'LINKUSD': 'LINKUSD'
+  'BTCUSD': 'XXBTZUSD'
 };
 
 module.exports = {
