@@ -6,16 +6,10 @@ const sentiment = require('sentiment');
 const priceCache = new Map();
 const analyzer = new sentiment();
 
-async function fetchPriceWithRetry(krakenPair, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const response = await axios.get(`https://api.kraken.com/0/public/Ticker?pair=${krakenPair}`);
-      return response.data.result[krakenPair];
-    } catch (err) {
-      if (i === retries - 1) throw err;
-      await new Promise(res => setTimeout(res, 1000));
-    }
-  }
+async function fetchOHLC(krakenPair, interval = 1, count = 50) {
+  // Obtiene velas OHLC de 1 minuto (últimas 50)
+  const response = await axios.get(`https://api.kraken.com/0/public/OHLC?pair=${krakenPair}&interval=${interval}&since=${Math.floor(Date.now() / 1000) - (count * 60)}`);
+  return response.data.result[krakenPair].slice(-count); // Últimas 50 velas
 }
 
 async function scanMarkets(supabase, bot, CHAT_ID, currentLot) {
@@ -24,18 +18,16 @@ async function scanMarkets(supabase, bot, CHAT_ID, currentLot) {
       const krakenPair = KRAKEN_PAIRS[asset];
       if (!krakenPair) continue;
 
-      const data = await fetchPriceWithRetry(krakenPair);
-      if (!data) continue;
+      // Obtiene velas de 1 minuto
+      const ohlcData = await fetchOHLC(krakenPair, 1, 50);
+      if (!ohlcData || ohlcData.length < 20) continue;
 
-      const ask = parseFloat(data.a[0]);
-      const bid = parseFloat(data.b[0]);
-      if (isNaN(ask) || isNaN(bid)) continue;
-
-      const currentPrice = (ask + bid) / 2;
-      const spread = ask - bid;
+      // Usa el precio de cierre de la última vela de 1 minuto
+      const currentPrice = parseFloat(ohlcData[ohlcData.length - 1][4]); // Close price
 
       priceCache.set(asset, currentPrice);
 
+      // Guarda precio en learning_db para análisis histórico
       await supabase.from('learning_db').insert({ asset, price: currentPrice });
 
       const { data: openTrades } = await supabase
@@ -45,16 +37,17 @@ async function scanMarkets(supabase, bot, CHAT_ID, currentLot) {
         .eq('activo', asset);
       if (openTrades.length >= 3) continue;
 
-      // Análisis de sentimiento
+      // Análisis de sentimiento (opcional)
       const newsResponse = await axios.get(`https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=${asset}&apikey=${ALPHA_VANTAGE_API_KEY}`);
       const score = newsResponse.data.feed ? analyzer.analyze(newsResponse.data.feed[0].title).score : 0;
-      if (score < -0.5) continue; // Evita si negativo
+      if (score < -0.5) continue;
 
-      const signal = await analyze(supabase, asset, currentPrice, spread);
+      // Pasa velas de 1 minuto a analyze
+      const signal = await analyze(supabase, asset, currentPrice, 0, ohlcData); // Agrega ohlcData como parámetro
       signal.risk.lot = currentLot;
 
       if (signal.action === 'PRE-ALERTA' && signal.direction) {
-        const message = `⚠️ PRE-ALERTA: ${asset} preparándose para ${signal.direction}`;
+        const message = `⚠️ PRE-ALERTA (1min analysis, entrada en 15min): ${asset} preparándose para ${signal.direction}`;
         await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
       } else if (signal.action === 'ENTRADA' && signal.direction) {
         await supabase.from('trades_history').insert({
@@ -64,7 +57,7 @@ async function scanMarkets(supabase, bot, CHAT_ID, currentLot) {
           tp: signal.risk.tp,
           sl: signal.risk.sl
         });
-        const message = `🚀 ENTRADA CONFIRMADA: ${signal.direction}\nACTIVO: ${asset}\nPRECIO ENTRADA: ${signal.price.toFixed(2)}\nSL: ${signal.risk.sl.toFixed(2)}\nTP: ${signal.risk.tp.toFixed(2)}`;
+        const message = `🚀 ENTRADA CONFIRMADA (1min analysis, opera en 15min): ${signal.direction}\nACTIVO: ${asset}\nPRECIO ENTRADA: ${signal.price.toFixed(2)}\nSL: ${signal.risk.sl.toFixed(2)}\nTP: ${signal.risk.tp.toFixed(2)}`;
         await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
       }
 
