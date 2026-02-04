@@ -39,31 +39,24 @@ function calculateBollingerBands(prices, period = 20, stdDevMultiplier = 2) {
   };
 }
 
-async function analyze(supabase, asset, currentPrice, spread) {
+async function analyze(supabase, asset, currentPrice, spread, ohlcData) {
   try {
-    const { data: prices, error } = await supabase
-      .from('learning_db')
-      .select('price')
-      .eq('asset', asset)
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    if (error) throw error;
+    // Usa velas de 1 minuto para indicadores
+    const prices = ohlcData.map(v => parseFloat(v[4])); // Close prices de velas
 
     if (prices.length < 20) {
       return { action: 'SILENCE', probability: 0, price: currentPrice, risk: { sl: 0, tp: 0, lot: 0 }, direction: null };
     }
 
-    const priceValues = prices.map(p => p.price);
-    const avg = priceValues.reduce((a, b) => a + b, 0) / priceValues.length;
-    const variance = priceValues.reduce((sum, p) => sum + Math.pow(p - avg, 2), 0) / priceValues.length;
+    const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+    const variance = prices.reduce((sum, p) => sum + Math.pow(p - avg, 2), 0) / prices.length;
     const stdDev = Math.sqrt(variance);
     let confidence = Math.max(0, Math.min(100, 100 - (stdDev / avg * 100)));
 
-    const rsi = calculateRSI(priceValues, 14);
-    const ema = calculateEMA(priceValues, 20);
-    const { macd, signal, histogram } = calculateMACD(priceValues);
-    const bb = calculateBollingerBands(priceValues);
+    const rsi = calculateRSI(prices, 14);
+    const ema = calculateEMA(prices, 20);
+    const { macd, signal, histogram } = calculateMACD(prices);
+    const bb = calculateBollingerBands(prices);
 
     let direction = null;
     if (currentPrice > ema && macd > signal && currentPrice > bb.middle) {
