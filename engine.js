@@ -60,29 +60,42 @@ async function analyze(supabase, asset, currentPrice, spread, ohlcData) {
 
     console.log(`[${asset}] Confianza: ${confidence.toFixed(2)}, RSI: ${rsi.toFixed(2)}, EMA: ${ema.toFixed(2)}, MACD: ${macd.toFixed(2)}, BB Middle: ${bb.middle.toFixed(2)}`);
 
+    // Condiciones más flexibles: Al menos 2 de 3 indicadores coinciden
+    let buyScore = 0;
+    let sellScore = 0;
+
+    if (currentPrice > ema) buyScore++;
+    if (macd > signal) buyScore++;
+    if (currentPrice > bb.middle) buyScore++;
+
+    if (currentPrice < ema) sellScore++;
+    if (macd < signal) sellScore++;
+    if (currentPrice < bb.middle) sellScore++;
+
     let direction = null;
-    if (currentPrice > ema && macd > signal && currentPrice > bb.middle) {
+    if (buyScore >= 2) {
       direction = 'COMPRA';
-    } else if (currentPrice < ema && macd < signal && currentPrice < bb.middle) {
+    } else if (sellScore >= 2) {
       direction = 'VENTA';
     }
 
+    // Boost por RSI extremo
     if (direction) {
-      if ((direction === 'COMPRA' && rsi < 30) || (direction === 'VENTA' && rsi > 70)) {
-        confidence += 15;
+      if ((direction === 'COMPRA' && rsi < 35) || (direction === 'VENTA' && rsi > 65)) {
+        confidence += 20;  // Más boost
       }
     }
 
     let action = 'WAIT';
     if (spread > 100) {
       action = 'WAIT_SPREAD';
-    } else if (confidence > 75 && direction) {  // Bajado de 85 a 75 para entradas más fáciles
+    } else if (confidence > 70 && direction) {  // Bajado a 70 para entradas
       action = 'ENTRADA';
-    } else if (confidence >= 60 && direction) {  // Bajado de 70 a 60 para pre-alertas más fáciles
+    } else if (confidence >= 50 && direction) {  // Bajado a 50 para pre-alertas
       action = 'PRE-ALERTA';
     }
 
-    console.log(`[${asset}] Acción: ${action}, Dirección: ${direction || 'N/A'}, Confianza Final: ${confidence.toFixed(2)}`);
+    console.log(`[${asset}] Acción: ${action}, Dirección: ${direction || 'N/A'}, Confianza Final: ${confidence.toFixed(2)}, BuyScore: ${buyScore}, SellScore: ${sellScore}`);
 
     let sl, tp;
     if (direction === 'COMPRA') {
