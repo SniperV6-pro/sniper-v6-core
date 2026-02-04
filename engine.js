@@ -41,10 +41,10 @@ function calculateBollingerBands(prices, period = 20, stdDevMultiplier = 2) {
 
 async function analyze(supabase, asset, currentPrice, spread, ohlcData) {
   try {
-    // Usa velas de 1 minuto para indicadores
-    const prices = ohlcData.map(v => parseFloat(v[4])); // Close prices de velas
+    const prices = ohlcData.map(v => parseFloat(v[4]));
 
     if (prices.length < 20) {
+      console.log(`[${asset}] Datos insuficientes: ${prices.length} precios`);
       return { action: 'SILENCE', probability: 0, price: currentPrice, risk: { sl: 0, tp: 0, lot: 0 }, direction: null };
     }
 
@@ -57,6 +57,8 @@ async function analyze(supabase, asset, currentPrice, spread, ohlcData) {
     const ema = calculateEMA(prices, 20);
     const { macd, signal, histogram } = calculateMACD(prices);
     const bb = calculateBollingerBands(prices);
+
+    console.log(`[${asset}] Confianza: ${confidence.toFixed(2)}, RSI: ${rsi.toFixed(2)}, EMA: ${ema.toFixed(2)}, MACD: ${macd.toFixed(2)}, BB Middle: ${bb.middle.toFixed(2)}`);
 
     let direction = null;
     if (currentPrice > ema && macd > signal && currentPrice > bb.middle) {
@@ -74,11 +76,13 @@ async function analyze(supabase, asset, currentPrice, spread, ohlcData) {
     let action = 'WAIT';
     if (spread > 100) {
       action = 'WAIT_SPREAD';
-    } else if (confidence > 85 && direction) {
+    } else if (confidence > 75 && direction) {  // Bajado de 85 a 75 para entradas más fáciles
       action = 'ENTRADA';
-    } else if (confidence >= 70 && direction) {
+    } else if (confidence >= 60 && direction) {  // Bajado de 70 a 60 para pre-alertas más fáciles
       action = 'PRE-ALERTA';
     }
+
+    console.log(`[${asset}] Acción: ${action}, Dirección: ${direction || 'N/A'}, Confianza Final: ${confidence.toFixed(2)}`);
 
     let sl, tp;
     if (direction === 'COMPRA') {
